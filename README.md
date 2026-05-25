@@ -18,9 +18,113 @@ The system answers three core questions every investor needs:
 
 ## Architecture
 
+```mermaid
+flowchart TD
 
-<img width="1536" height="1024" alt="image" src="https://github.com/user-attachments/assets/55e11b3f-facd-4c37-b702-05db590a000a" />
+%% ================= USER =================
+UI[" User Interface"]
 
+%% ================= ORCHESTRATOR =================
+ORCH[" Orchestrator Agent<br/>(agents/orchestrator.py)<br/>
+• Validate ticker (NSE/BSE)
+• Fetch company & sector
+• Launch agents via asyncio.gather()
+• Handle errors / retries
+• Send results to synthesis"]
+
+UI --> ORCH
+
+%% ================= AGENTS =================
+subgraph AGENTS["Concurrent Multi-Agent System"]
+
+SD[" Stock Data Agent<br/>
+yfinance
+• 5Y OHLCV
+• Price data
+• Volume / Beta
+• 52w High-Low"]
+
+TA[" Technical Analysis Agent
+pandas-ta<br/>
+• RSI
+• MACD
+• Bollinger Bands
+• MA / ADX
+• Support / Resistance"]
+
+FA[" Fundamental Agent
+yfinance<br/>
+• P/E
+• EPS
+• DCF
+• ROE
+• Ratings"]
+
+NS["News & Sentiment Agent
+Exa.ai<br/>
+• News scan
+• Sentiment
+• Analyst ratings"]
+
+MI["Management Intelligence Agent
+Exa.ai<br/>
+• CEO / Board
+• Promoters
+• Earnings calls"]
+
+end
+
+ORCH --> SD
+ORCH --> TA
+ORCH --> FA
+ORCH --> NS
+ORCH --> MI
+
+%% ================= SYNTHESIS =================
+SYN[" Synthesis Agent 
+Inputs: All agent JSON outputs<br/>
+Outputs:
+• Long-term Signal (BUY/HOLD/SELL)
+• Short-term Signal (BUY/WAIT/AVOID)
+• Composite Score
+• 5-point Summary
+• StockReport Model"]
+
+SD --> SYN
+TA --> SYN
+FA --> SYN
+NS --> SYN
+MI --> SYN
+
+%% ================= OUTPUT =================
+REPORT["Report Output<br/>
+• JSON
+• Markdown
+• PDF Export"]
+
+DASH[" Streamlit Dashboard<br/>
+• Signal Banner
+• Score Bars
+• Entry / Exit Cards
+• News Feed
+• Downloads"]
+
+SYN --> REPORT
+SYN --> DASH
+
+%% ================= STYLING =================
+classDef blue fill:#dbeafe,stroke:#2563eb,color:#000;
+classDef green fill:#dcfce7,stroke:#16a34a,color:#000;
+classDef yellow fill:#fef3c7,stroke:#d97706,color:#000;
+classDef red fill:#fee2e2,stroke:#dc2626,color:#000;
+classDef purple fill:#ede9fe,stroke:#7c3aed,color:#000;
+
+class UI blue
+class ORCH green
+class SD,TA,FA,NS,MI yellow
+class SYN purple
+class REPORT,DASH red
+```
 ---
 
 ##  Key Features
