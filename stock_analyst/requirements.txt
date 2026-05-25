@@ -1,0 +1,12 @@
+crewai
+crewai-tools
+anthropic
+exa-py
+yfinance
+pandas-ta
+pandas
+numpy
+streamlit
+python-dotenv
+httpx
+pydantic
