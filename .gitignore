@@ -1,0 +1,38 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+stock_analyst/.env
+
+# Build and tooling artifacts
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# IDE/editor
+.vscode/
+.idea/
+
+# Streamlit cache
+.streamlit/
+
+# Generated reports
+stock_analyst/reports/*.json
+stock_analyst/reports/*.md
+!stock_analyst/reports/.gitkeep
