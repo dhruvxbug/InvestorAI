@@ -14,6 +14,8 @@ st.title("📈 InvestorAI — Indian Stock Multi-Agent Analyst")
 env = validate_environment()
 if not env["anthropic_key_configured"]:
     st.error("ANTHROPIC_API_KEY missing in stock_analyst/.env")
+if not env["exa_key_configured"]:
+    st.error("EXA_API_KEY missing in stock_analyst/.env")
 
 user_ticker = st.text_input("Enter NSE/BSE ticker (e.g. RELIANCE, INFY, HDFCBANK)", "RELIANCE")
 

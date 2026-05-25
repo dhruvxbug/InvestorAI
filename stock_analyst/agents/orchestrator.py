@@ -26,11 +26,21 @@ class AnalysisOrchestrator:
         self.synthesis_agent = SynthesisAgent()
 
     async def _run_parallel(self, ticker: str, company_name: str) -> dict[str, Any]:
+        technical_task = asyncio.to_thread(self.technical_agent.analyze, ticker)
+        fundamental_task = asyncio.to_thread(self.fundamental_agent.analyze, ticker)
+        sentiment_task = asyncio.to_thread(self.sentiment_agent.analyze, ticker, company_name)
+        management_task = asyncio.to_thread(self.management_agent.analyze, ticker, company_name)
+        technical, fundamental, sentiment, management = await asyncio.gather(
+            technical_task,
+            fundamental_task,
+            sentiment_task,
+            management_task,
+        )
         return {
-            "technical": await asyncio.to_thread(self.technical_agent.analyze, ticker),
-            "fundamental": await asyncio.to_thread(self.fundamental_agent.analyze, ticker),
-            "sentiment": await asyncio.to_thread(self.sentiment_agent.analyze, ticker, company_name),
-            "management": await asyncio.to_thread(self.management_agent.analyze, ticker, company_name),
+            "technical": technical,
+            "fundamental": fundamental,
+            "sentiment": sentiment,
+            "management": management,
         }
 
     async def analyze_stock(self, raw_ticker: str) -> tuple[StockAnalysisReport, str, str]:

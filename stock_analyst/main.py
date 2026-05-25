@@ -19,6 +19,9 @@ async def _run(ticker: str) -> int:
     if not env["anthropic_key_configured"]:
         print("Error: ANTHROPIC_API_KEY is missing in stock_analyst/.env")
         return 1
+    if not env["exa_key_configured"]:
+        print("Error: EXA_API_KEY is missing in stock_analyst/.env")
+        return 1
 
     orchestrator = AnalysisOrchestrator()
     report, json_path, md_path = await orchestrator.analyze_stock(ticker)
