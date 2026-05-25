@@ -13,8 +13,7 @@ class ExaSearchClient:
             raise ValueError("EXA_API_KEY is not configured")
         self.client = Exa(api_key=EXA_API_KEY)
 
-    def search_news(self, company_name: str, ticker: str, num_results: int = NEWS_RESULT_COUNT) -> list[dict[str, Any]]:
-        query = f"{company_name} ({ticker}) India stock latest news sentiment"
+    def search(self, query: str, num_results: int) -> list[dict[str, Any]]:
         response = self.client.search_and_contents(
             query=query,
             type="neural",
@@ -27,28 +26,16 @@ class ExaSearchClient:
                 "title": result.title,
                 "url": result.url,
                 "published_date": result.published_date,
-                "summary": (result.text or "")[:700],
+                "summary": (result.text or "")[:1200],
                 "highlights": result.highlights or [],
             }
             for result in response.results
         ]
 
+    def search_news(self, company_name: str, ticker: str, num_results: int = NEWS_RESULT_COUNT) -> list[dict[str, Any]]:
+        query = f"{company_name} ({ticker}) India stock latest news sentiment"
+        return self.search(query=query, num_results=num_results)
+
     def search_management_signals(self, company_name: str, ticker: str, num_results: int = MANAGEMENT_RESULT_COUNT) -> list[dict[str, Any]]:
         query = f"{company_name} ({ticker}) CEO board changes insider trading corporate governance India"
-        response = self.client.search_and_contents(
-            query=query,
-            type="neural",
-            num_results=num_results,
-            text=True,
-            highlights=True,
-        )
-        return [
-            {
-                "title": result.title,
-                "url": result.url,
-                "published_date": result.published_date,
-                "summary": (result.text or "")[:700],
-                "highlights": result.highlights or [],
-            }
-            for result in response.results
-        ]
+        return self.search(query=query, num_results=num_results)
