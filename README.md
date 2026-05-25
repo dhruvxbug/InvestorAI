@@ -33,69 +33,9 @@ The system answers three core questions every investor needs:
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        USER INTERFACE                           │
-│                   Streamlit App (app.py)                        │
-│              Input: Stock Ticker (e.g. "HDFCBANK")              │
-└───────────────────────────┬─────────────────────────────────────┘
-                            │
-                            ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    ORCHESTRATOR AGENT                           │
-│                  (agents/orchestrator.py)                       │
-│  • Validates ticker (NSE/BSE auto-detect)                       │
-│  • Fetches company name and sector                              │
-│  • Launches 5 agents concurrently via asyncio.gather()          │
-│  • Handles errors, timeouts, retries                            │
-│  • Passes all results to Synthesis Agent                        │
-└──────┬──────────┬──────────┬──────────┬────────────┬───────────┘
-       │          │          │          │            │
-  (async)    (async)    (async)    (async)       (async)
-       │          │          │          │            │
-       ▼          ▼          ▼          ▼            ▼
-┌──────────┐ ┌─────────┐ ┌──────────┐ ┌──────────┐ ┌───────────┐
-│  STOCK   │ │TECHNICAL│ │FUNDAMEN- │ │  NEWS &  │ │MANAGEMENT │
-│  DATA    │ │ANALYSIS │ │   TAL    │ │SENTIMENT │ │INTELLIGEN-│
-│  AGENT   │ │  AGENT  │ │  AGENT   │ │  AGENT   │ │   CE      │
-│          │ │         │ │          │ │          │ │  AGENT    │
-│yfinance  │ │pandas-ta│ │yfinance  │ │ Exa.ai   │ │  Exa.ai   │
-│5yr OHLCV │ │RSI,MACD │ │P/E,EPS,  │ │News scan │ │CEO/Board  │
-│Price data│ │BB,MA,ADX│ │DCF,ROE   │ │Sentiment │ │Promoters  │
-│Vol,Beta  │ │Support/ │ │Valuation │ │Analyst   │ │Earnings   │
-│52w H/L   │ │Resist.  │ │Ratings   │ │ratings   │ │calls      │
-└──────┬───┘ └────┬────┘ └────┬─────┘ └────┬─────┘ └─────┬─────┘
-       │          │           │             │             │
-       └──────────┴───────────┴─────────────┴─────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                   SYNTHESIS AGENT                               │
-│               (agents/synthesis_agent.py)                       │
-│                                                                 │
-│  Another agent as the reasoning brain                           │
-│                                                                 │
-│  Inputs: All 5 agent outputs (JSON)                             │
-│  Outputs:                                                       │
-│    ├── Long-Term Signal (BUY/HOLD/SELL + exact ₹ levels)        │
-│    ├── Short-Term Signal (BUY/WAIT/AVOID + exact ₹ levels)      │
-│    ├── Composite Score (X/10)                                   │
-│    ├── 5-Point Key Summary                                      │
-│    └── Full StockReport (Pydantic model)                        │
-└───────────────────────────┬─────────────────────────────────────┘
-                            │
-               ┌────────────┴────────────┐
-               ▼                         ▼
-    ┌─────────────────┐       ┌──────────────────────┐
-    │  Report Output  │       │ Streamlit Dashboard │
-    │  ─────────────  │       │  ──────────────────  │
-    │  • JSON file    │       │  • Signal banner     │
-    │  • Markdown     │       │  • Score bars        │
-    │  • PDF export   │       │  • Entry/Exit cards  │
-    └─────────────────┘       │  • News feed         │
-                              │  • Download buttons  │
-                              └──────────────────────┘
-```
+
+<img width="1536" height="1024" alt="image" src="https://github.com/user-attachments/assets/55e11b3f-facd-4c37-b702-05db590a000a" />
+
 ---
 
 ## Agent Descriptions
