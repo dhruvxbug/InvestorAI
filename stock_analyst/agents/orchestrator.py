@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from datetime import datetime
+from typing import Any, Awaitable, Callable
+
+import yfinance as yf
 
 from agents.fundamental_agent import FundamentalAgent
 from agents.management_agent import ManagementAgent
@@ -10,9 +13,20 @@ from agents.stock_data_agent import StockDataAgent
 from agents.synthesis_agent import SynthesisAgent
 from agents.technical_agent import TechnicalAgent
 from config.settings import REPORTS_DIR, normalize_ticker
-from models.report_schema import AgentSection, FinalRecommendation, StockAnalysisReport, TradeLevels
+from models.report_schema import (
+    CompositeScores,
+    LongTermRecommendation,
+    RiskLevel,
+    ShortTermRecommendation,
+    SignalType,
+    StockReport,
+)
 from utils.formatter import report_to_markdown, save_report_files
 from utils.logger import get_logger
+
+
+class StockDataError(Exception):
+    pass
 
 
 class AnalysisOrchestrator:
@@ -25,95 +39,270 @@ class AnalysisOrchestrator:
         self.management_agent = ManagementAgent()
         self.synthesis_agent = SynthesisAgent()
 
-    async def _run_parallel(self, ticker: str, company_name: str, sector_name: str, stock_data: dict[str, Any]) -> dict[str, Any]:
-        technical_task = asyncio.to_thread(
-            self.technical_agent.analyze,
-            stock_data["raw_df"],
-            stock_data.get("week_52_high"),
-        )
-        fundamental_task = asyncio.to_thread(self.fundamental_agent.analyze, ticker)
-        sentiment_task = asyncio.to_thread(self.sentiment_agent.analyze, ticker, company_name, sector_name)
-        management_task = asyncio.to_thread(self.management_agent.analyze, ticker, company_name)
+    async def _fetch_info_with_retry(self, ticker: str) -> dict[str, Any]:
+        last_error: Exception | None = None
+        for attempt in range(2):
+            try:
+                return await asyncio.to_thread(lambda: yf.Ticker(ticker).info or {})
+            except Exception as exc:  # noqa: BLE001
+                last_error = exc
+                self.logger.warning("yfinance info fetch failed for %s (attempt %s/2): %s", ticker, attempt + 1, exc)
+                if attempt == 0:
+                    await asyncio.sleep(1)
+        raise StockDataError(f"Failed to fetch data for {ticker}: {last_error}")
 
-        technical, fundamental, sentiment, management = await asyncio.gather(
+    async def _resolve_ticker(self, raw_ticker: str) -> tuple[str, dict[str, Any]]:
+        cleaned = raw_ticker.strip().upper()
+        if not cleaned:
+            raise StockDataError("Ticker cannot be empty")
+
+        if cleaned.endswith((".NS", ".BO")):
+            candidates = [cleaned]
+        else:
+            candidates = [cleaned, f"{cleaned}.NS", f"{cleaned}.BO"]
+
+        failures: list[str] = []
+        for candidate in candidates:
+            try:
+                info = await self._fetch_info_with_retry(candidate)
+                if info.get("longName") or info.get("shortName") or info.get("regularMarketPrice") or info.get("currentPrice"):
+                    return candidate, info
+                failures.append(f"{candidate}: no market metadata")
+            except Exception as exc:  # noqa: BLE001
+                failures.append(f"{candidate}: {exc}")
+
+        raise StockDataError(f"Ticker validation failed for '{raw_ticker}'. Tried {candidates}. Details: {' | '.join(failures)}")
+
+    async def _run_with_timeout(
+        self,
+        agent_name: str,
+        func: Callable[..., Any],
+        *args: Any,
+        exa_fallback: bool = False,
+    ) -> dict[str, Any]:
+        try:
+            result = await asyncio.wait_for(asyncio.to_thread(func, *args), timeout=60)
+            return result if isinstance(result, dict) else {}
+        except asyncio.TimeoutError:
+            self.logger.error("%s timed out after 60 seconds", agent_name)
+        except Exception as exc:  # noqa: BLE001
+            if exa_fallback:
+                self.logger.warning("%s failed (continuing with empty data): %s", agent_name, exc)
+            else:
+                self.logger.error("%s failed: %s", agent_name, exc)
+        return {}
+
+    async def _run_synthesis_with_retry(self, ticker: str, company_name: str, context: dict[str, Any]) -> dict[str, Any]:
+        last_error: Exception | None = None
+        for attempt in range(2):
+            try:
+                return await asyncio.wait_for(
+                    asyncio.to_thread(self.synthesis_agent.synthesize, ticker, company_name, context),
+                    timeout=60,
+                )
+            except Exception as exc:  # noqa: BLE001
+                last_error = exc
+                self.logger.warning("Claude synthesis failed (attempt %s/2): %s", attempt + 1, exc)
+                if attempt == 0:
+                    await asyncio.sleep(2**attempt)
+        self.logger.error("Claude synthesis failed after retries: %s", last_error)
+        return {}
+
+    @staticmethod
+    def _to_signal(value: str | None, default: SignalType) -> SignalType:
+        normalized = (value or default.value).upper()
+        aliases = {
+            "NEUTRAL": "HOLD",
+            "STRONG SELL": "SELL",
+        }
+        normalized = aliases.get(normalized, normalized)
+        try:
+            return SignalType(normalized)
+        except ValueError:
+            return default
+
+    @staticmethod
+    def _to_risk(value: str | None) -> RiskLevel:
+        normalized = (value or "MEDIUM").upper()
+        try:
+            return RiskLevel(normalized)
+        except ValueError:
+            return RiskLevel.MEDIUM
+
+    @staticmethod
+    def _to_float(value: Any, default: float = 0.0) -> float:
+        try:
+            if value is None:
+                return default
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _build_report(
+        self,
+        ticker: str,
+        company_name: str,
+        current_price: float,
+        technical: dict[str, Any],
+        fundamental: dict[str, Any],
+        sentiment: dict[str, Any],
+        management: dict[str, Any],
+        synthesis: dict[str, Any],
+    ) -> StockReport:
+        long_data = synthesis.get("long_term", {}) if isinstance(synthesis.get("long_term"), dict) else {}
+        short_data = synthesis.get("short_term", {}) if isinstance(synthesis.get("short_term"), dict) else {}
+        score_data = synthesis.get("scores", {}) if isinstance(synthesis.get("scores"), dict) else {}
+
+        default_entry = self._to_float(technical.get("entry_price"), current_price)
+        default_sl = self._to_float(technical.get("stop_loss"), round(default_entry * 0.95, 2))
+        default_t1 = self._to_float(technical.get("target_1"), round(default_entry * 1.05, 2))
+        default_t2 = self._to_float(technical.get("target_2"), round(default_entry * 1.1, 2))
+        default_t3 = self._to_float(technical.get("target_3"), round(default_entry * 1.2, 2))
+
+        summary = synthesis.get("key_summary") if isinstance(synthesis.get("key_summary"), list) else []
+        summary = [str(item) for item in summary][:5]
+        while len(summary) < 5:
+            filler = [
+                f"Technical signal: {technical.get('technical_signal', 'N/A')}",
+                f"Fundamental signal: {fundamental.get('fundamental_signal', 'N/A')}",
+                f"Sentiment signal: {sentiment.get('sentiment_signal', 'N/A')}",
+                f"Management signal: {management.get('management_signal', 'N/A')}",
+                f"Current price reference: ₹{current_price:.2f}",
+            ]
+            summary.append(filler[len(summary)])
+
+        long_term = LongTermRecommendation(
+            signal=self._to_signal(long_data.get("signal"), SignalType.HOLD),
+            entry_price=self._to_float(long_data.get("entry_price"), default_entry),
+            entry_condition=str(long_data.get("entry_condition") or f"Accumulate near ₹{default_entry:.2f}"),
+            target_1_year=self._to_float(long_data.get("target_1_year"), default_t2),
+            target_3_year=self._to_float(long_data.get("target_3_year"), max(default_t2, default_t3)),
+            expected_cagr=self._to_float(long_data.get("expected_cagr"), 12.0),
+            stop_loss_price=self._to_float(long_data.get("stop_loss_price"), default_sl),
+            exit_triggers=[str(x) for x in (long_data.get("exit_triggers") or [f"Exit if monthly close below ₹{default_sl:.2f}"])],
+            risk_level=self._to_risk(long_data.get("risk_level")),
+            key_risks=[str(x) for x in (long_data.get("key_risks") or ["Market risk"])][:5],
+            key_catalysts=[str(x) for x in (long_data.get("key_catalysts") or ["Earnings surprise"])][:5],
+            confidence_pct=int(max(0, min(100, self._to_float(long_data.get("confidence_pct"), 55)))),
+            reasoning=str(long_data.get("reasoning") or "Balanced long-term view based on multi-agent synthesis."),
+        )
+
+        short_term = ShortTermRecommendation(
+            signal=self._to_signal(short_data.get("signal"), SignalType.WAIT),
+            entry_price=self._to_float(short_data.get("entry_price"), default_entry),
+            entry_condition=str(short_data.get("entry_condition") or f"Enter if price holds above ₹{default_entry:.2f}"),
+            target_1=self._to_float(short_data.get("target_1"), default_t1),
+            target_2=self._to_float(short_data.get("target_2"), default_t2),
+            target_3=self._to_float(short_data.get("target_3"), default_t3),
+            stop_loss=self._to_float(short_data.get("stop_loss"), default_sl),
+            risk_reward_ratio=str(short_data.get("risk_reward_ratio") or "1:2"),
+            trade_setup_type=str(short_data.get("trade_setup_type") or "Positional"),
+            holding_period=str(short_data.get("holding_period") or "1-12 weeks"),
+            confidence_pct=int(max(0, min(100, self._to_float(short_data.get("confidence_pct"), 50)))),
+            reasoning=str(short_data.get("reasoning") or "Short-term setup based on momentum and support/resistance."),
+        )
+
+        scores = CompositeScores(
+            technical=self._to_float(score_data.get("technical"), 5.0),
+            fundamental=self._to_float(score_data.get("fundamental"), 5.0),
+            sentiment=self._to_float(score_data.get("sentiment"), 5.0),
+            management=self._to_float(score_data.get("management"), 5.0),
+            valuation=self._to_float(score_data.get("valuation"), 5.0),
+            overall=self._to_float(score_data.get("overall"), 5.0),
+            agents_bullish=int(self._to_float(score_data.get("agents_bullish"), 0.0)),
+            agents_bearish=int(self._to_float(score_data.get("agents_bearish"), 0.0)),
+            agents_neutral=int(self._to_float(score_data.get("agents_neutral"), 0.0)),
+        )
+
+        return StockReport(
+            ticker=ticker,
+            company_name=company_name,
+            current_price=current_price,
+            analysis_date=datetime.utcnow().strftime("%Y-%m-%d"),
+            key_summary=summary[:5],
+            long_term=long_term,
+            short_term=short_term,
+            scores=scores,
+            raw_technical=technical,
+            raw_fundamental=fundamental,
+            raw_sentiment=sentiment,
+            raw_management=management,
+        )
+
+    async def analyze_stock(self, raw_ticker: str) -> tuple[StockReport, str, str]:
+        normalized_input = normalize_ticker(raw_ticker)
+        ticker, info = await self._resolve_ticker(normalized_input)
+        company_name = str(info.get("longName") or info.get("shortName") or ticker)
+        sector_name = str(info.get("sector") or "Indian equity")
+        current_price = self._to_float(info.get("currentPrice") or info.get("regularMarketPrice"), 0.0)
+
+        self.logger.info("Running analysis for %s (%s)", ticker, company_name)
+
+        stock_task = asyncio.create_task(self._run_with_timeout("Stock Data Agent", self.stock_agent.analyze, ticker))
+
+        async def run_technical() -> dict[str, Any]:
+            stock_data = await stock_task
+            raw_df = stock_data.get("raw_df") if isinstance(stock_data, dict) else None
+            if raw_df is None:
+                self.logger.error("Technical Analysis Agent skipped due to missing stock raw_df")
+                return {}
+            return await self._run_with_timeout(
+                "Technical Analysis Agent",
+                self.technical_agent.analyze,
+                raw_df,
+                stock_data.get("week_52_high"),
+            )
+
+        technical_task = asyncio.create_task(run_technical())
+        fundamental_task = asyncio.create_task(
+            self._run_with_timeout("Fundamental Analysis Agent", self.fundamental_agent.analyze, ticker)
+        )
+        sentiment_task = asyncio.create_task(
+            self._run_with_timeout(
+                "News & Sentiment Agent",
+                self.sentiment_agent.analyze,
+                ticker,
+                company_name,
+                sector_name,
+                exa_fallback=True,
+            )
+        )
+        management_task = asyncio.create_task(
+            self._run_with_timeout(
+                "Management & Insider Intelligence Agent",
+                self.management_agent.analyze,
+                ticker,
+                company_name,
+                exa_fallback=True,
+            )
+        )
+
+        stock_data, technical, fundamental, sentiment, management = await asyncio.gather(
+            stock_task,
             technical_task,
             fundamental_task,
             sentiment_task,
             management_task,
         )
-        return {
+
+        merged_context = {
+            "stock_data": stock_data,
             "technical": technical,
             "fundamental": fundamental,
             "sentiment": sentiment,
             "management": management,
         }
 
-    @staticmethod
-    def _build_final_recommendation(synthesis_output: dict[str, Any]) -> FinalRecommendation:
-        long_term = synthesis_output.get("long_term_analysis", {})
-        short_term = synthesis_output.get("short_term_analysis", {})
-
-        signal_map = {
-            "STRONG BUY": "BUY",
-            "BUY": "BUY",
-            "ACCUMULATE": "BUY",
-            "HOLD": "HOLD",
-            "REDUCE": "SELL",
-            "SELL": "SELL",
-        }
-
-        mapped_signal = signal_map.get(str(long_term.get("signal", "HOLD")).upper(), "HOLD")
-        confidence = int(long_term.get("confidence_pct", 50) or 50)
-
-        targets = short_term.get("targets", {}) if isinstance(short_term.get("targets"), dict) else {}
-        stop_loss_data = short_term.get("stop_loss", {}) if isinstance(short_term.get("stop_loss"), dict) else {}
-
-        return FinalRecommendation(
-            signal=mapped_signal,
-            confidence=max(0, min(100, confidence)),
-            rationale="\n".join(synthesis_output.get("key_decision_summary", [])) or "Composite multi-agent synthesis generated.",
-            risks=long_term.get("key_risks", []) if isinstance(long_term.get("key_risks"), list) else [],
-            trade_levels=TradeLevels(
-                entry_price=TechnicalValueParser.to_float(short_term.get("entry")),
-                target_price=TechnicalValueParser.to_float(targets.get("target_2")),
-                stop_loss=TechnicalValueParser.to_float(stop_loss_data.get("hard_stop")),
-                time_horizon=short_term.get("time_in_trade", "2-8 weeks"),
-            ),
-        )
-
-    async def analyze_stock(self, raw_ticker: str) -> tuple[StockAnalysisReport, str, str]:
-        ticker = normalize_ticker(raw_ticker)
-        self.logger.info("Running analysis for %s", ticker)
-
-        stock_data = await asyncio.to_thread(self.stock_agent.analyze, ticker)
-        company_name = stock_data.get("company_name", ticker)
-        sector_name = stock_data.get("sector") or "Indian equity"
-
-        parallel_outputs = await self._run_parallel(
+        synthesis = await self._run_synthesis_with_retry(ticker=ticker, company_name=company_name, context=merged_context)
+        report = self._build_report(
             ticker=ticker,
             company_name=company_name,
-            sector_name=sector_name,
-            stock_data=stock_data,
-        )
-
-        merged_context = {
-            "stock_data": stock_data,
-            **parallel_outputs,
-        }
-        synthesis_output = await asyncio.to_thread(self.synthesis_agent.synthesize, ticker, merged_context)
-        recommendation = self._build_final_recommendation(synthesis_output)
-
-        report = StockAnalysisReport(
-            ticker=ticker,
-            sections=[
-                AgentSection(name="Stock Data", summary="Price and volume snapshot", key_points=[], raw_data=stock_data),
-                AgentSection(name="Technical", summary="Indicator and trend read", key_points=[], raw_data=parallel_outputs["technical"]),
-                AgentSection(name="Fundamental", summary="Valuation and quality signals", key_points=[], raw_data=parallel_outputs["fundamental"]),
-                AgentSection(name="Sentiment", summary="Recent media/news sentiment", key_points=[], raw_data=parallel_outputs["sentiment"]),
-                AgentSection(name="Management", summary="Leadership and governance signals", key_points=[], raw_data=parallel_outputs["management"]),
-                AgentSection(name="Synthesis", summary="Cross-agent long/short horizon recommendation", key_points=[], raw_data=synthesis_output),
-            ],
-            recommendation=recommendation,
+            current_price=self._to_float(stock_data.get("current_price"), current_price),
+            technical=technical,
+            fundamental=fundamental,
+            sentiment=sentiment,
+            management=management,
+            synthesis=synthesis,
         )
 
         REPORTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -121,22 +310,3 @@ class AnalysisOrchestrator:
         json_path, md_path = save_report_files(report=report, markdown=markdown, output_dir=REPORTS_DIR)
         self.logger.info("Saved report files: %s, %s", json_path, md_path)
         return report, str(json_path), str(md_path)
-
-
-class TechnicalValueParser:
-    @staticmethod
-    def to_float(value: Any) -> float | None:
-        if value is None:
-            return None
-        if isinstance(value, (int, float)):
-            return float(value)
-        if isinstance(value, str):
-            import re
-
-            match = re.search(r"\d+(?:\.\d+)?", value.replace(",", ""))
-            if match:
-                try:
-                    return float(match.group(0))
-                except ValueError:
-                    return None
-        return None

@@ -27,11 +27,13 @@ async def _run(ticker: str) -> int:
     report, json_path, md_path = await orchestrator.analyze_stock(ticker)
 
     print(f"\nTicker: {report.ticker}")
-    print(f"Signal: {report.recommendation.signal}")
-    print(f"Confidence: {report.recommendation.confidence}%")
-    print(f"Entry: {report.recommendation.trade_levels.entry_price}")
-    print(f"Target: {report.recommendation.trade_levels.target_price}")
-    print(f"Stop Loss: {report.recommendation.trade_levels.stop_loss}")
+    print(f"Company: {report.company_name}")
+    print(f"Current Price: ₹{report.current_price:.2f}")
+    print(f"Long-Term Signal: {report.long_term.signal.value}")
+    print(f"Long-Term Confidence: {report.long_term.confidence_pct}%")
+    print(f"Short-Term Signal: {report.short_term.signal.value}")
+    print(f"Short-Term Entry: ₹{report.short_term.entry_price:.2f}")
+    print(f"Short-Term Stop Loss: ₹{report.short_term.stop_loss:.2f}")
     print(f"JSON Report: {json_path}")
     print(f"Markdown Report: {md_path}")
     return 0

@@ -28,9 +28,9 @@ if st.button("Run Analysis", type="primary"):
         st.success("Analysis complete")
         st.subheader("Final Recommendation")
         c1, c2, c3 = st.columns(3)
-        c1.metric("Signal", report.recommendation.signal)
-        c2.metric("Confidence", f"{report.recommendation.confidence}%")
-        c3.metric("Entry", str(report.recommendation.trade_levels.entry_price))
+        c1.metric("Long-Term Signal", report.long_term.signal.value)
+        c2.metric("Short-Term Signal", report.short_term.signal.value)
+        c3.metric("Current Price", f"₹{report.current_price:.2f}")
 
         st.markdown(report_to_markdown(report))
         st.caption(f"Saved JSON: {json_path}")
