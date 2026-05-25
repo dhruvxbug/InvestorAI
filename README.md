@@ -16,6 +16,13 @@ The system answers three core questions every investor needs:
 
 ---
 
+## Architecture
+
+
+<img width="1536" height="1024" alt="image" src="https://github.com/user-attachments/assets/55e11b3f-facd-4c37-b702-05db590a000a" />
+
+---
+
 ##  Key Features
 
 -  **6 Specialized AI Agents** running concurrently via `asyncio`
@@ -28,13 +35,6 @@ The system answers three core questions every investor needs:
 -  **Composite Scoring** — 5-dimension score (Technical / Fundamental / Sentiment / Management / Valuation)
 -  **Streamlit Dashboard** — clean UI with signal banners, score bars, and one-click report export
 -  **Report Export** — save as Markdown, JSON, or PDF
-
----
-
-## Architecture
-
-
-<img width="1536" height="1024" alt="image" src="https://github.com/user-attachments/assets/55e11b3f-facd-4c37-b702-05db590a000a" />
 
 ---
 
