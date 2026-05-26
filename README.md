@@ -2,9 +2,9 @@
 
 > **This tool is for educational and non-commercial usage. This tool is only supposed to provide a detailed report and recommendations about a stock, use your common sense before investing blindly. Adding a wallet or giving direct monetary access and decision making is not recommended and will require custom changes, you are free to build on top of this for personal usage.**
 
-# Stock Analyst AI — Multi-Agent Stock Analysis System
+# Multi-Agent Stock Analysis System
 
-**Stock Analyst AI** is a multi-agent system built specifically for retail investors using platforms like **Groww**, **Zerodha**, or **Angel One** in the Indian market. Instead of relying on manual research or screenshot-based advice, this system runs **6 specialized AI agents in parallel**, each analysing a different dimension of a stock, and synthesises everything into a single clean investment report.
+This is a multi-agent system built specifically for retail investors using platforms like **Groww**, **Zerodha**, or **Angel One** in the Indian market. Instead of relying on manual research or screenshot-based advice, this system runs **6 specialized AI agents in parallel**, each analysing a different dimension of a stock, and synthesises everything into a single clean investment report.
 
 The system answers three core questions every investor needs:
 
