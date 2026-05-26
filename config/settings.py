@@ -13,6 +13,12 @@ load_dotenv(BASE_DIR / ".env")
 ANTHROPIC_MODEL = "claude-sonnet-4-20250514"
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 EXA_API_KEY = os.getenv("EXA_API_KEY", "")
+OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
+OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+# Which provider to use: anthropic | openrouter | openai  (auto-detected if blank)
+LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "")
+# Model ID or friendly label from MODEL_CATALOG  (uses provider default if blank)
+LLM_MODEL: str = os.getenv("LLM_MODEL", "")
 DEFAULT_EXCHANGE = os.getenv("DEFAULT_EXCHANGE", ".NS")
 REPORTS_DIR = BASE_DIR / "reports"
 
@@ -74,6 +80,10 @@ def normalize_ticker(ticker: str) -> str:
 def validate_environment() -> dict[str, Any]:
     return {
         "anthropic_key_configured": bool(ANTHROPIC_API_KEY),
+        "openrouter_key_configured": bool(OPENROUTER_API_KEY),
+        "openai_key_configured": bool(OPENAI_API_KEY),
         "exa_key_configured": bool(EXA_API_KEY),
+        "llm_provider": LLM_PROVIDER or "auto",
+        "llm_model": LLM_MODEL or "default",
         "reports_dir": str(REPORTS_DIR),
     }

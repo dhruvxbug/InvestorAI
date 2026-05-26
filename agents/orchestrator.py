@@ -22,6 +22,7 @@ from models.report_schema import (
     StockReport,
 )
 from utils.formatter import report_to_markdown, save_report_files
+from utils.llm_client import LLMClient, build_llm_client
 from utils.logger import get_logger
 
 
@@ -30,14 +31,18 @@ class StockDataError(Exception):
 
 
 class AnalysisOrchestrator:
-    def __init__(self) -> None:
+    def __init__(
+        self, provider: str | None = None, model_id: str | None = None
+    ) -> None:
         self.logger = get_logger()
         self.stock_agent = StockDataAgent()
         self.technical_agent = TechnicalAgent()
         self.fundamental_agent = FundamentalAgent()
         self.sentiment_agent = SentimentAgent()
         self.management_agent = ManagementAgent()
-        self.synthesis_agent = SynthesisAgent()
+        _llm = build_llm_client(provider=provider, model_id=model_id)
+        self._active_model = _llm.display_name if _llm else "heuristic fallback"
+        self.synthesis_agent = SynthesisAgent(llm_client=_llm)
 
     async def _fetch_info_with_retry(self, ticker: str) -> dict[str, Any]:
         last_error: Exception | None = None
@@ -46,7 +51,12 @@ class AnalysisOrchestrator:
                 return await asyncio.to_thread(lambda: yf.Ticker(ticker).info or {})
             except Exception as exc:  # noqa: BLE001
                 last_error = exc
-                self.logger.warning("yfinance info fetch failed for %s (attempt %s/2): %s", ticker, attempt + 1, exc)
+                self.logger.warning(
+                    "yfinance info fetch failed for %s (attempt %s/2): %s",
+                    ticker,
+                    attempt + 1,
+                    exc,
+                )
                 if attempt == 0:
                     await asyncio.sleep(1)
         raise StockDataError(f"Failed to fetch data for {ticker}: {last_error}")
@@ -65,13 +75,20 @@ class AnalysisOrchestrator:
         for candidate in candidates:
             try:
                 info = await self._fetch_info_with_retry(candidate)
-                if info.get("longName") or info.get("shortName") or info.get("regularMarketPrice") or info.get("currentPrice"):
+                if (
+                    info.get("longName")
+                    or info.get("shortName")
+                    or info.get("regularMarketPrice")
+                    or info.get("currentPrice")
+                ):
                     return candidate, info
                 failures.append(f"{candidate}: no market metadata")
             except Exception as exc:  # noqa: BLE001
                 failures.append(f"{candidate}: {exc}")
 
-        raise StockDataError(f"Ticker validation failed for '{raw_ticker}'. Tried {candidates}. Details: {' | '.join(failures)}")
+        raise StockDataError(
+            f"Ticker validation failed for '{raw_ticker}'. Tried {candidates}. Details: {' | '.join(failures)}"
+        )
 
     async def _run_with_timeout(
         self,
@@ -87,22 +104,30 @@ class AnalysisOrchestrator:
             self.logger.error("%s timed out after 60 seconds", agent_name)
         except Exception as exc:  # noqa: BLE001
             if exa_fallback:
-                self.logger.warning("%s failed (continuing with empty data): %s", agent_name, exc)
+                self.logger.warning(
+                    "%s failed (continuing with empty data): %s", agent_name, exc
+                )
             else:
                 self.logger.error("%s failed: %s", agent_name, exc)
         return {}
 
-    async def _run_synthesis_with_retry(self, ticker: str, company_name: str, context: dict[str, Any]) -> dict[str, Any]:
+    async def _run_synthesis_with_retry(
+        self, ticker: str, company_name: str, context: dict[str, Any]
+    ) -> dict[str, Any]:
         last_error: Exception | None = None
         for attempt in range(2):
             try:
                 return await asyncio.wait_for(
-                    asyncio.to_thread(self.synthesis_agent.synthesize, ticker, company_name, context),
+                    asyncio.to_thread(
+                        self.synthesis_agent.synthesize, ticker, company_name, context
+                    ),
                     timeout=60,
                 )
             except Exception as exc:  # noqa: BLE001
                 last_error = exc
-                self.logger.warning("Claude synthesis failed (attempt %s/2): %s", attempt + 1, exc)
+                self.logger.warning(
+                    "Claude synthesis failed (attempt %s/2): %s", attempt + 1, exc
+                )
                 if attempt == 0:
                     await asyncio.sleep(2**attempt)
         self.logger.error("Claude synthesis failed after retries: %s", last_error)
@@ -149,17 +174,41 @@ class AnalysisOrchestrator:
         management: dict[str, Any],
         synthesis: dict[str, Any],
     ) -> StockReport:
-        long_data = synthesis.get("long_term", {}) if isinstance(synthesis.get("long_term"), dict) else {}
-        short_data = synthesis.get("short_term", {}) if isinstance(synthesis.get("short_term"), dict) else {}
-        score_data = synthesis.get("scores", {}) if isinstance(synthesis.get("scores"), dict) else {}
+        long_data = (
+            synthesis.get("long_term", {})
+            if isinstance(synthesis.get("long_term"), dict)
+            else {}
+        )
+        short_data = (
+            synthesis.get("short_term", {})
+            if isinstance(synthesis.get("short_term"), dict)
+            else {}
+        )
+        score_data = (
+            synthesis.get("scores", {})
+            if isinstance(synthesis.get("scores"), dict)
+            else {}
+        )
 
         default_entry = self._to_float(technical.get("entry_price"), current_price)
-        default_sl = self._to_float(technical.get("stop_loss"), round(default_entry * 0.95, 2))
-        default_t1 = self._to_float(technical.get("target_1"), round(default_entry * 1.05, 2))
-        default_t2 = self._to_float(technical.get("target_2"), round(default_entry * 1.1, 2))
-        default_t3 = self._to_float(technical.get("target_3"), round(default_entry * 1.2, 2))
+        default_sl = self._to_float(
+            technical.get("stop_loss"), round(default_entry * 0.95, 2)
+        )
+        default_t1 = self._to_float(
+            technical.get("target_1"), round(default_entry * 1.05, 2)
+        )
+        default_t2 = self._to_float(
+            technical.get("target_2"), round(default_entry * 1.1, 2)
+        )
+        default_t3 = self._to_float(
+            technical.get("target_3"), round(default_entry * 1.2, 2)
+        )
 
-        summary = synthesis.get("key_summary") if isinstance(synthesis.get("key_summary"), list) else []
+        summary = (
+            synthesis.get("key_summary")
+            if isinstance(synthesis.get("key_summary"), list)
+            else []
+        )
         summary = [str(item) for item in summary][:5]
         while len(summary) < 5:
             filler = [
@@ -174,23 +223,49 @@ class AnalysisOrchestrator:
         long_term = LongTermRecommendation(
             signal=self._to_signal(long_data.get("signal"), SignalType.HOLD),
             entry_price=self._to_float(long_data.get("entry_price"), default_entry),
-            entry_condition=str(long_data.get("entry_condition") or f"Accumulate near ₹{default_entry:.2f}"),
+            entry_condition=str(
+                long_data.get("entry_condition")
+                or f"Accumulate near ₹{default_entry:.2f}"
+            ),
             target_1_year=self._to_float(long_data.get("target_1_year"), default_t2),
-            target_3_year=self._to_float(long_data.get("target_3_year"), max(default_t2, default_t3)),
+            target_3_year=self._to_float(
+                long_data.get("target_3_year"), max(default_t2, default_t3)
+            ),
             expected_cagr=self._to_float(long_data.get("expected_cagr"), 12.0),
-            stop_loss_price=self._to_float(long_data.get("stop_loss_price"), default_sl),
-            exit_triggers=[str(x) for x in (long_data.get("exit_triggers") or [f"Exit if monthly close below ₹{default_sl:.2f}"])],
+            stop_loss_price=self._to_float(
+                long_data.get("stop_loss_price"), default_sl
+            ),
+            exit_triggers=[
+                str(x)
+                for x in (
+                    long_data.get("exit_triggers")
+                    or [f"Exit if monthly close below ₹{default_sl:.2f}"]
+                )
+            ],
             risk_level=self._to_risk(long_data.get("risk_level")),
-            key_risks=[str(x) for x in (long_data.get("key_risks") or ["Market risk"])][:5],
-            key_catalysts=[str(x) for x in (long_data.get("key_catalysts") or ["Earnings surprise"])][:5],
-            confidence_pct=int(max(0, min(100, self._to_float(long_data.get("confidence_pct"), 55)))),
-            reasoning=str(long_data.get("reasoning") or "Balanced long-term view based on multi-agent synthesis."),
+            key_risks=[str(x) for x in (long_data.get("key_risks") or ["Market risk"])][
+                :5
+            ],
+            key_catalysts=[
+                str(x)
+                for x in (long_data.get("key_catalysts") or ["Earnings surprise"])
+            ][:5],
+            confidence_pct=int(
+                max(0, min(100, self._to_float(long_data.get("confidence_pct"), 55)))
+            ),
+            reasoning=str(
+                long_data.get("reasoning")
+                or "Balanced long-term view based on multi-agent synthesis."
+            ),
         )
 
         short_term = ShortTermRecommendation(
             signal=self._to_signal(short_data.get("signal"), SignalType.WAIT),
             entry_price=self._to_float(short_data.get("entry_price"), default_entry),
-            entry_condition=str(short_data.get("entry_condition") or f"Enter if price holds above ₹{default_entry:.2f}"),
+            entry_condition=str(
+                short_data.get("entry_condition")
+                or f"Enter if price holds above ₹{default_entry:.2f}"
+            ),
             target_1=self._to_float(short_data.get("target_1"), default_t1),
             target_2=self._to_float(short_data.get("target_2"), default_t2),
             target_3=self._to_float(short_data.get("target_3"), default_t3),
@@ -198,8 +273,13 @@ class AnalysisOrchestrator:
             risk_reward_ratio=str(short_data.get("risk_reward_ratio") or "1:2"),
             trade_setup_type=str(short_data.get("trade_setup_type") or "Positional"),
             holding_period=str(short_data.get("holding_period") or "1-12 weeks"),
-            confidence_pct=int(max(0, min(100, self._to_float(short_data.get("confidence_pct"), 50)))),
-            reasoning=str(short_data.get("reasoning") or "Short-term setup based on momentum and support/resistance."),
+            confidence_pct=int(
+                max(0, min(100, self._to_float(short_data.get("confidence_pct"), 50)))
+            ),
+            reasoning=str(
+                short_data.get("reasoning")
+                or "Short-term setup based on momentum and support/resistance."
+            ),
         )
 
         scores = CompositeScores(
@@ -234,17 +314,28 @@ class AnalysisOrchestrator:
         ticker, info = await self._resolve_ticker(normalized_input)
         company_name = str(info.get("longName") or info.get("shortName") or ticker)
         sector_name = str(info.get("sector") or "Indian equity")
-        current_price = self._to_float(info.get("currentPrice") or info.get("regularMarketPrice"), 0.0)
+        current_price = self._to_float(
+            info.get("currentPrice") or info.get("regularMarketPrice"), 0.0
+        )
 
-        self.logger.info("Running analysis for %s (%s)", ticker, company_name)
+        self.logger.info(
+            "Running analysis for %s (%s) | model=%s",
+            ticker,
+            company_name,
+            self._active_model,
+        )
 
-        stock_task = asyncio.create_task(self._run_with_timeout("Stock Data Agent", self.stock_agent.analyze, ticker))
+        stock_task = asyncio.create_task(
+            self._run_with_timeout("Stock Data Agent", self.stock_agent.analyze, ticker)
+        )
 
         async def run_technical() -> dict[str, Any]:
             stock_data = await stock_task
             raw_df = stock_data.get("raw_df") if isinstance(stock_data, dict) else None
             if raw_df is None:
-                self.logger.error("Technical Analysis Agent skipped due to missing stock raw_df")
+                self.logger.error(
+                    "Technical Analysis Agent skipped due to missing stock raw_df"
+                )
                 return {}
             return await self._run_with_timeout(
                 "Technical Analysis Agent",
@@ -255,7 +346,9 @@ class AnalysisOrchestrator:
 
         technical_task = asyncio.create_task(run_technical())
         fundamental_task = asyncio.create_task(
-            self._run_with_timeout("Fundamental Analysis Agent", self.fundamental_agent.analyze, ticker)
+            self._run_with_timeout(
+                "Fundamental Analysis Agent", self.fundamental_agent.analyze, ticker
+            )
         )
         sentiment_task = asyncio.create_task(
             self._run_with_timeout(
@@ -277,7 +370,13 @@ class AnalysisOrchestrator:
             )
         )
 
-        stock_data, technical, fundamental, sentiment, management = await asyncio.gather(
+        (
+            stock_data,
+            technical,
+            fundamental,
+            sentiment,
+            management,
+        ) = await asyncio.gather(
             stock_task,
             technical_task,
             fundamental_task,
@@ -293,11 +392,15 @@ class AnalysisOrchestrator:
             "management": management,
         }
 
-        synthesis = await self._run_synthesis_with_retry(ticker=ticker, company_name=company_name, context=merged_context)
+        synthesis = await self._run_synthesis_with_retry(
+            ticker=ticker, company_name=company_name, context=merged_context
+        )
         report = self._build_report(
             ticker=ticker,
             company_name=company_name,
-            current_price=self._to_float(stock_data.get("current_price"), current_price),
+            current_price=self._to_float(
+                stock_data.get("current_price"), current_price
+            ),
             technical=technical,
             fundamental=fundamental,
             sentiment=sentiment,
@@ -307,6 +410,8 @@ class AnalysisOrchestrator:
 
         REPORTS_DIR.mkdir(parents=True, exist_ok=True)
         markdown = report_to_markdown(report)
-        json_path, md_path = save_report_files(report=report, markdown=markdown, output_dir=REPORTS_DIR)
+        json_path, md_path = save_report_files(
+            report=report, markdown=markdown, output_dir=REPORTS_DIR
+        )
         self.logger.info("Saved report files: %s, %s", json_path, md_path)
         return report, str(json_path), str(md_path)

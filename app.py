@@ -20,6 +20,7 @@ from agents.orchestrator import AnalysisOrchestrator
 from config.settings import validate_environment
 from models.report_schema import StockReport
 from utils.formatter import report_to_markdown
+from utils.llm_client import MODEL_CATALOG, PROVIDER_DEFAULTS
 
 # ─── Page config ─────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -150,7 +151,7 @@ _env = validate_environment()
 # ─── Sidebar ─────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("## 📈 Stock Analyst AI")
-    st.caption("Multi-Agent AI · NSE / BSE · Powered by Claude")
+    st.caption("Multi-Agent AI · NSE / BSE · Powered by AI")
     st.divider()
 
     ticker_input: str = st.text_input(
@@ -169,10 +170,68 @@ with st.sidebar:
         ),
     )
 
-    if not _env["anthropic_key_configured"]:
-        st.warning("⚠️ ANTHROPIC_API_KEY not set in .env")
+    _has_any_llm = (
+        _env["anthropic_key_configured"]
+        or _env["openrouter_key_configured"]
+        or _env["openai_key_configured"]
+    )
+    if not _has_any_llm:
+        st.error(
+            "⚠️ No LLM API key configured. Add ANTHROPIC_API_KEY, OPENROUTER_API_KEY, or OPENAI_API_KEY to .env"
+        )
+    else:
+        if _env["anthropic_key_configured"]:
+            st.success("✅ Anthropic key set")
+        if _env["openrouter_key_configured"]:
+            st.success("✅ OpenRouter key set")
+        if _env["openai_key_configured"]:
+            st.success("✅ OpenAI key set")
     if not _env["exa_key_configured"]:
-        st.warning("⚠️ EXA_API_KEY not set in .env")
+        st.warning("⚠️ EXA_API_KEY not set — news/sentiment will be skipped")
+
+    st.divider()
+    st.markdown("**🤖 AI Model**")
+
+    # Build flat list of labels for the dropdown
+    _catalog_labels = [m["label"] for m in MODEL_CATALOG]
+
+    # Smart default: pick first model whose provider has a configured key
+    _default_idx = 0
+    for _i, _m in enumerate(MODEL_CATALOG):
+        _p = _m["provider"]
+        if (
+            (_p == "anthropic" and _env["anthropic_key_configured"])
+            or (_p == "openrouter" and _env["openrouter_key_configured"])
+            or (_p == "openai" and _env["openai_key_configured"])
+        ):
+            _default_idx = _i
+            break
+
+    _selected_label: str = st.selectbox(
+        "Model",
+        _catalog_labels,
+        index=_default_idx,
+        help="Choose the AI model for the synthesis step. Requires the matching API key in .env.",
+    )
+    _selected_entry = next(m for m in MODEL_CATALOG if m["label"] == _selected_label)
+    _sel_provider = _selected_entry["provider"]
+    _sel_model_id = _selected_entry["model_id"]
+
+    with st.expander("🔧 Custom model ID"):
+        _custom_provider = st.selectbox(
+            "Provider",
+            ["anthropic", "openrouter", "openai"],
+            key="custom_provider",
+        )
+        _custom_model_id = st.text_input(
+            "Model ID",
+            placeholder="e.g. meta-llama/llama-3.3-70b-instruct",
+            key="custom_model_id",
+        )
+        if _custom_model_id.strip():
+            _sel_provider = _custom_provider
+            _sel_model_id = _custom_model_id.strip()
+            st.caption(f"Using custom: `{_sel_provider}` / `{_sel_model_id}`")
 
     analyse_clicked = st.button(
         "🔍 Analyse Stock",
@@ -209,7 +268,9 @@ if analyse_clicked:
         st.write("🧠 Synthesising with AI…")
 
         try:
-            _orchestrator = AnalysisOrchestrator()
+            _orchestrator = AnalysisOrchestrator(
+                provider=_sel_provider, model_id=_sel_model_id
+            )
             _report, _json_path, _md_path = asyncio.run(
                 _orchestrator.analyze_stock(raw_ticker)
             )
@@ -257,6 +318,9 @@ st.markdown(
     </div>
     """,
     unsafe_allow_html=True,
+)
+st.caption(
+    f"Analysis synthesised by **{_sel_model_id}** via **{_sel_provider}**  ·  {rpt.analysis_date}"
 )
 
 # ── 2. Key Summary ────────────────────────────────────────────────────────────

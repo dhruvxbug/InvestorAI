@@ -3,17 +3,14 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from anthropic import Anthropic
-
-from config.settings import ANTHROPIC_API_KEY, ANTHROPIC_MODEL
-
+from utils.llm_client import LLMClient, build_llm_client
 
 SYSTEM_PROMPT = """
-You are a senior equity research analyst with 20 years of experience 
-in Indian stock markets. You have deep expertise in fundamental 
-analysis, technical analysis, and market sentiment. Your job is to 
-synthesize data from multiple analysis agents and produce clear, 
-actionable investment reports. 
+You are a senior equity research analyst with 20 years of experience
+in Indian stock markets. You have deep expertise in fundamental
+analysis, technical analysis, and market sentiment. Your job is to
+synthesize data from multiple analysis agents and produce clear,
+actionable investment reports.
 
 Your reports are used by retail investors on Groww. They need:
 1. EXACT price levels — not vague ranges
@@ -33,13 +30,13 @@ Rules:
 """.strip()
 
 USER_TEMPLATE = """
-Analyze the following data for {ticker} ({company_name}) and generate 
+Analyze the following data for {ticker} ({company_name}) and generate
 a complete investment report.
 
 STOCK DATA: {stock_data_json}
 TECHNICAL ANALYSIS: {technical_data_json}
 FUNDAMENTAL ANALYSIS: {fundamental_data_json}
-NEWS & SENTIMENT: {sentiment_data_json}  
+NEWS & SENTIMENT: {sentiment_data_json}
 MANAGEMENT INTELLIGENCE: {management_data_json}
 
 Generate the full report following the exact structure specified.
@@ -50,8 +47,8 @@ Include specific ₹ price levels for every entry, target, and stop loss.
 class SynthesisAgent:
     name = "Report Synthesis Agent"
 
-    def __init__(self) -> None:
-        self.client = Anthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else None
+    def __init__(self, llm_client: LLMClient | None = None) -> None:
+        self.llm_client: LLMClient | None = llm_client or build_llm_client()
 
     @staticmethod
     def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -108,7 +105,9 @@ class SynthesisAgent:
         except json.JSONDecodeError:
             return None
 
-    def _heuristic_synthesis(self, ticker: str, context: dict[str, Any]) -> dict[str, Any]:
+    def _heuristic_synthesis(
+        self, ticker: str, context: dict[str, Any]
+    ) -> dict[str, Any]:
         stock_data = context.get("stock_data", {})
         technical = context.get("technical", {})
         fundamental = context.get("fundamental", {})
@@ -117,10 +116,18 @@ class SynthesisAgent:
 
         current_price = self._safe_float(stock_data.get("current_price"), 0.0)
         entry_price = self._safe_float(technical.get("entry_price"), current_price)
-        stop_loss = self._safe_float(technical.get("stop_loss"), round(entry_price * 0.95, 2))
-        target_1 = self._safe_float(technical.get("target_1"), round(entry_price * 1.05, 2))
-        target_2 = self._safe_float(technical.get("target_2"), round(entry_price * 1.1, 2))
-        target_3 = self._safe_float(technical.get("target_3"), round(entry_price * 1.18, 2))
+        stop_loss = self._safe_float(
+            technical.get("stop_loss"), round(entry_price * 0.95, 2)
+        )
+        target_1 = self._safe_float(
+            technical.get("target_1"), round(entry_price * 1.05, 2)
+        )
+        target_2 = self._safe_float(
+            technical.get("target_2"), round(entry_price * 1.1, 2)
+        )
+        target_3 = self._safe_float(
+            technical.get("target_3"), round(entry_price * 1.18, 2)
+        )
 
         signals = {
             "technical": technical.get("technical_signal", "NEUTRAL"),
@@ -129,8 +136,12 @@ class SynthesisAgent:
             "management": management.get("management_signal", "HOLD"),
         }
         score = sum(self._signal_to_numeric(value) for value in signals.values())
-        bullish = sum(1 for value in signals.values() if self._signal_to_numeric(value) > 0)
-        bearish = sum(1 for value in signals.values() if self._signal_to_numeric(value) < 0)
+        bullish = sum(
+            1 for value in signals.values() if self._signal_to_numeric(value) > 0
+        )
+        bearish = sum(
+            1 for value in signals.values() if self._signal_to_numeric(value) < 0
+        )
         neutral = 4 - bullish - bearish
 
         if score >= 4:
@@ -146,7 +157,9 @@ class SynthesisAgent:
         else:
             long_signal = "HOLD"
 
-        technical_signal = self._normalize_signal(technical.get("technical_signal", "WAIT"), short_term=True)
+        technical_signal = self._normalize_signal(
+            technical.get("technical_signal", "WAIT"), short_term=True
+        )
 
         valuation_label = str(fundamental.get("valuation_label", "FAIRLY VALUED"))
         if valuation_label == "UNDERVALUED":
@@ -159,28 +172,87 @@ class SynthesisAgent:
         intrinsic_value = self._safe_float(fundamental.get("intrinsic_value"), target_2)
         target_1_year = round(intrinsic_value, 2)
         target_3_year = round(max(target_1_year * 1.35, target_2), 2)
-        expected_cagr = round((((target_3_year / current_price) ** (1 / 3)) - 1) * 100, 2) if current_price else 0.0
+        expected_cagr = (
+            round((((target_3_year / current_price) ** (1 / 3)) - 1) * 100, 2)
+            if current_price
+            else 0.0
+        )
 
-        risk_level = "LOW" if bearish == 0 else "MEDIUM" if bearish == 1 else "HIGH" if bearish == 2 else "VERY HIGH"
+        risk_level = (
+            "LOW"
+            if bearish == 0
+            else "MEDIUM"
+            if bearish == 1
+            else "HIGH"
+            if bearish == 2
+            else "VERY HIGH"
+        )
 
-        key_risks = list(dict.fromkeys((fundamental.get("concerns") or []) + (management.get("red_flags") or [])))[:5]
+        key_risks = list(
+            dict.fromkeys(
+                (fundamental.get("concerns") or [])
+                + (management.get("red_flags") or [])
+            )
+        )[:5]
         if not key_risks:
-            key_risks = ["Market volatility", "Earnings miss risk", "Sector slowdown risk"]
+            key_risks = [
+                "Market volatility",
+                "Earnings miss risk",
+                "Sector slowdown risk",
+            ]
 
-        key_catalysts = [item.get("event") for item in (management.get("upcoming_catalysts") or []) if isinstance(item, dict) and item.get("event")]
+        key_catalysts = [
+            item.get("event")
+            for item in (management.get("upcoming_catalysts") or [])
+            if isinstance(item, dict) and item.get("event")
+        ]
         key_catalysts.extend(sentiment.get("key_events") or [])
-        key_catalysts = list(dict.fromkeys(key_catalysts))[:5] or ["Positive earnings surprise", "Sector rerating", "Improving technical trend"]
+        key_catalysts = list(dict.fromkeys(key_catalysts))[:5] or [
+            "Positive earnings surprise",
+            "Sector rerating",
+            "Improving technical trend",
+        ]
 
         risk_amount = max(entry_price - stop_loss, 0.01)
         reward_amount = max(target_2 - entry_price, 0.01)
         rr_ratio = round(reward_amount / risk_amount, 2)
 
-        technical_score = min(10.0, max(0.0, float((self._signal_to_numeric(signals["technical"]) + 2) * 2.5)))
-        fundamental_score = min(10.0, max(0.0, float((self._signal_to_numeric(signals["fundamental"]) + 2) * 2.5)))
-        sentiment_score = min(10.0, max(0.0, float((self._signal_to_numeric(signals["sentiment"]) + 2) * 2.5)))
-        management_score = min(10.0, max(0.0, float((self._signal_to_numeric(signals["management"]) + 2) * 2.5)))
-        valuation_score = 8.0 if valuation_label == "UNDERVALUED" else 5.0 if valuation_label == "FAIRLY VALUED" else 3.0
-        overall_score = round((technical_score + fundamental_score + sentiment_score + management_score + valuation_score) / 5, 2)
+        technical_score = min(
+            10.0,
+            max(0.0, float((self._signal_to_numeric(signals["technical"]) + 2) * 2.5)),
+        )
+        fundamental_score = min(
+            10.0,
+            max(
+                0.0, float((self._signal_to_numeric(signals["fundamental"]) + 2) * 2.5)
+            ),
+        )
+        sentiment_score = min(
+            10.0,
+            max(0.0, float((self._signal_to_numeric(signals["sentiment"]) + 2) * 2.5)),
+        )
+        management_score = min(
+            10.0,
+            max(0.0, float((self._signal_to_numeric(signals["management"]) + 2) * 2.5)),
+        )
+        valuation_score = (
+            8.0
+            if valuation_label == "UNDERVALUED"
+            else 5.0
+            if valuation_label == "FAIRLY VALUED"
+            else 3.0
+        )
+        overall_score = round(
+            (
+                technical_score
+                + fundamental_score
+                + sentiment_score
+                + management_score
+                + valuation_score
+            )
+            / 5,
+            2,
+        )
 
         return {
             "key_summary": [
@@ -219,9 +291,15 @@ class SynthesisAgent:
                 "target_3": round(target_3, 2),
                 "stop_loss": round(stop_loss, 2),
                 "risk_reward_ratio": f"Risk ₹{risk_amount:.2f}, Reward ₹{reward_amount:.2f} = 1:{rr_ratio}",
-                "trade_setup_type": "Breakout" if target_1 > current_price else "Pullback",
+                "trade_setup_type": "Breakout"
+                if target_1 > current_price
+                else "Pullback",
                 "holding_period": "1-12 weeks",
-                "confidence_pct": int(max(30, min(85, 45 + self._signal_to_numeric(technical_signal) * 12))),
+                "confidence_pct": int(
+                    max(
+                        30, min(85, 45 + self._signal_to_numeric(technical_signal) * 12)
+                    )
+                ),
                 "reasoning": "Short-term setup is driven primarily by trend, momentum, and support-resistance positioning.",
             },
             "scores": {
@@ -237,20 +315,30 @@ class SynthesisAgent:
             },
         }
 
-    def _build_user_prompt(self, ticker: str, company_name: str, context: dict[str, Any]) -> str:
+    def _build_user_prompt(
+        self, ticker: str, company_name: str, context: dict[str, Any]
+    ) -> str:
         return USER_TEMPLATE.format(
             ticker=ticker,
             company_name=company_name,
             stock_data_json=json.dumps(context.get("stock_data", {}), default=str),
             technical_data_json=json.dumps(context.get("technical", {}), default=str),
-            fundamental_data_json=json.dumps(context.get("fundamental", {}), default=str),
+            fundamental_data_json=json.dumps(
+                context.get("fundamental", {}), default=str
+            ),
             sentiment_data_json=json.dumps(context.get("sentiment", {}), default=str),
             management_data_json=json.dumps(context.get("management", {}), default=str),
         )
 
-    def synthesize(self, ticker: str, company_name: str, context: dict[str, Any]) -> dict[str, Any]:
+    def synthesize(
+        self, ticker: str, company_name: str, context: dict[str, Any]
+    ) -> dict[str, Any]:
         clean_context = {
-            "stock_data": {k: v for k, v in dict(context.get("stock_data", {})).items() if k not in {"raw_df", "hourly_df"}},
+            "stock_data": {
+                k: v
+                for k, v in dict(context.get("stock_data", {})).items()
+                if k not in {"raw_df", "hourly_df"}
+            },
             "technical": context.get("technical", {}),
             "fundamental": context.get("fundamental", {}),
             "sentiment": context.get("sentiment", {}),
@@ -258,24 +346,27 @@ class SynthesisAgent:
         }
 
         heuristic = self._heuristic_synthesis(ticker=ticker, context=clean_context)
-        if self.client is None:
+        if self.llm_client is None:
             return heuristic
 
-        user_prompt = self._build_user_prompt(ticker=ticker, company_name=company_name, context=clean_context)
-        response = self.client.messages.create(
-            model=ANTHROPIC_MODEL,
+        user_prompt = self._build_user_prompt(
+            ticker=ticker, company_name=company_name, context=clean_context
+        )
+        text_output = self.llm_client.complete(
+            system=SYSTEM_PROMPT,
+            user=user_prompt,
             max_tokens=2500,
             temperature=0.2,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_prompt}],
         )
-        text_output = "".join(block.text for block in response.content if getattr(block, "type", None) == "text")
         parsed = self._extract_json(text_output)
         if not parsed:
             return heuristic
 
         parsed.setdefault("key_summary", heuristic["key_summary"])
-        if not isinstance(parsed.get("key_summary"), list) or len(parsed["key_summary"]) != 5:
+        if (
+            not isinstance(parsed.get("key_summary"), list)
+            or len(parsed["key_summary"]) != 5
+        ):
             parsed["key_summary"] = heuristic["key_summary"]
         parsed.setdefault("long_term", heuristic["long_term"])
         parsed.setdefault("short_term", heuristic["short_term"])
