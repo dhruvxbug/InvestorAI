@@ -1,0 +1,26 @@
+# LLM
+anthropic>=0.49.0
+
+# Web search
+exa-py>=1.8.0
+
+# Stock data
+yfinance>=0.2.61
+
+# Technical analysis (pure-Python, no numba — works on Python 3.14)
+ta>=0.10.2
+
+# Data processing
+pandas>=2.2.3
+numpy>=1.26.4
+
+# Frontend
+streamlit>=1.43.0
+plotly>=5.24.0
+
+# Data validation
+pydantic>=2.10.6
+
+# Utilities
+python-dotenv>=1.0.1
+httpx>=0.28.1

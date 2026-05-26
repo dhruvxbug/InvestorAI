@@ -4,7 +4,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-import pandas_ta as ta
+import ta as ta_lib
 
 
 class TechnicalAgent:
@@ -36,16 +36,24 @@ class TechnicalAgent:
         merged = pd.concat([a, b], axis=1).dropna().tail(2)
         if len(merged) < 2:
             return False
-        return bool(merged.iloc[0, 0] <= merged.iloc[0, 1] and merged.iloc[1, 0] > merged.iloc[1, 1])
+        return bool(
+            merged.iloc[0, 0] <= merged.iloc[0, 1]
+            and merged.iloc[1, 0] > merged.iloc[1, 1]
+        )
 
     @staticmethod
     def _cross_down(a: pd.Series, b: pd.Series) -> bool:
         merged = pd.concat([a, b], axis=1).dropna().tail(2)
         if len(merged) < 2:
             return False
-        return bool(merged.iloc[0, 0] >= merged.iloc[0, 1] and merged.iloc[1, 0] < merged.iloc[1, 1])
+        return bool(
+            merged.iloc[0, 0] >= merged.iloc[0, 1]
+            and merged.iloc[1, 0] < merged.iloc[1, 1]
+        )
 
-    def analyze(self, raw_df: pd.DataFrame, week_52_high: float | None = None) -> dict[str, Any]:
+    def analyze(
+        self, raw_df: pd.DataFrame, week_52_high: float | None = None
+    ) -> dict[str, Any]:
         data = self._normalize_ohlcv(raw_df)
 
         close = data["Close"]
@@ -53,30 +61,41 @@ class TechnicalAgent:
         low = data["Low"]
         volume = data["Volume"]
 
-        rsi_series = ta.rsi(close, length=14)
-        macd_df = ta.macd(close, fast=12, slow=26, signal=9)
-        bbands_df = ta.bbands(close, length=20, std=2)
+        # ── RSI ────────────────────────────────────────────────────────────
+        rsi_series = ta_lib.momentum.RSIIndicator(close=close, window=14).rsi()
 
-        sma_20_s = ta.sma(close, length=20)
-        sma_50_s = ta.sma(close, length=50)
-        sma_200_s = ta.sma(close, length=200)
-        ema_9_s = ta.ema(close, length=9)
-        ema_21_s = ta.ema(close, length=21)
+        # ── MACD ───────────────────────────────────────────────────────────
+        _macd_ind = ta_lib.trend.MACD(
+            close=close, window_slow=26, window_fast=12, window_sign=9
+        )
+        macd_line = _macd_ind.macd()
+        macd_signal_line = _macd_ind.macd_signal()
 
-        atr_s = ta.atr(high, low, close, length=14)
-        stoch_df = ta.stoch(high, low, close, k=14, d=3)
-        adx_df = ta.adx(high, low, close, length=14)
+        # ── Bollinger Bands ────────────────────────────────────────────────
+        _bb_ind = ta_lib.volatility.BollingerBands(close=close, window=20, window_dev=2)
+        bb_upper_s = _bb_ind.bollinger_hband()
+        bb_lower_s = _bb_ind.bollinger_lband()
 
+        # ── Moving averages ────────────────────────────────────────────────
+        sma_20_s = ta_lib.trend.SMAIndicator(close=close, window=20).sma_indicator()
+        sma_50_s = ta_lib.trend.SMAIndicator(close=close, window=50).sma_indicator()
+        sma_200_s = ta_lib.trend.SMAIndicator(close=close, window=200).sma_indicator()
+        ema_9_s = ta_lib.trend.EMAIndicator(close=close, window=9).ema_indicator()
+        ema_21_s = ta_lib.trend.EMAIndicator(close=close, window=21).ema_indicator()
+
+        # ── ATR / ADX ──────────────────────────────────────────────────────
+        atr_s = ta_lib.volatility.AverageTrueRange(
+            high=high, low=low, close=close, window=14
+        ).average_true_range()
+        adx_s = ta_lib.trend.ADXIndicator(
+            high=high, low=low, close=close, window=14
+        ).adx()
+
+        # ── VWAP (manual rolling approximation) ───────────────────────────
         typical_price = (high + low + close) / 3
-        vwap = ((typical_price * volume).cumsum() / volume.replace(0, np.nan).cumsum()).replace([np.inf, -np.inf], np.nan)
-
-        macd_line = macd_df["MACD_12_26_9"] if macd_df is not None else pd.Series(dtype=float)
-        macd_signal_line = macd_df["MACDs_12_26_9"] if macd_df is not None else pd.Series(dtype=float)
-
-        bb_upper_s = bbands_df["BBU_20_2.0"] if bbands_df is not None else pd.Series(dtype=float)
-        bb_lower_s = bbands_df["BBL_20_2.0"] if bbands_df is not None else pd.Series(dtype=float)
-
-        adx_s = adx_df["ADX_14"] if adx_df is not None else pd.Series(dtype=float)
+        vwap = (
+            (typical_price * volume).cumsum() / volume.replace(0, np.nan).cumsum()
+        ).replace([np.inf, -np.inf], np.nan)
 
         current_price = float(close.iloc[-1])
         rsi = self._latest(rsi_series)
@@ -98,14 +117,19 @@ class TechnicalAgent:
         macd_bearish = self._cross_down(macd_line, macd_signal_line)
 
         recent_price = close.tail(60)
-        recent_rsi = rsi_series.tail(60) if rsi_series is not None else pd.Series(dtype=float)
+        recent_rsi = (
+            rsi_series.tail(60) if rsi_series is not None else pd.Series(dtype=float)
+        )
         rsi_divergence = False
         if len(recent_price.dropna()) >= 30 and len(recent_rsi.dropna()) >= 30:
             first_half_price_high = float(recent_price.head(30).max())
             second_half_price_high = float(recent_price.tail(30).max())
             first_half_rsi_high = float(recent_rsi.head(30).max())
             second_half_rsi_high = float(recent_rsi.tail(30).max())
-            rsi_divergence = second_half_price_high > first_half_price_high and second_half_rsi_high < first_half_rsi_high
+            rsi_divergence = (
+                second_half_price_high > first_half_price_high
+                and second_half_rsi_high < first_half_rsi_high
+            )
 
         price_above_all_ma = bool(
             sma_20 is not None
@@ -127,16 +151,31 @@ class TechnicalAgent:
         bb_width = ((bb_upper_s - bb_lower_s) / close).dropna()
         bb_squeeze = False
         if len(bb_width) >= 30:
-            bb_squeeze = float(bb_width.iloc[-1]) <= float(bb_width.tail(120).quantile(0.2))
+            bb_squeeze = float(bb_width.iloc[-1]) <= float(
+                bb_width.tail(120).quantile(0.2)
+            )
 
         recent_window = data.tail(30)
-        immediate_support = float(recent_window["Low"].min()) if not recent_window.empty else current_price
-        immediate_resistance = float(recent_window["High"].max()) if not recent_window.empty else current_price
+        immediate_support = (
+            float(recent_window["Low"].min())
+            if not recent_window.empty
+            else current_price
+        )
+        immediate_resistance = (
+            float(recent_window["High"].max())
+            if not recent_window.empty
+            else current_price
+        )
 
-        support_levels = [level for level in [immediate_support, sma_50, sma_200] if level is not None]
+        support_levels = [
+            level for level in [immediate_support, sma_50, sma_200] if level is not None
+        ]
         resistance_levels = [
             level
-            for level in [immediate_resistance, week_52_high or float(data["High"].tail(252).max())]
+            for level in [
+                immediate_resistance,
+                week_52_high or float(data["High"].tail(252).max()),
+            ]
             if level is not None
         ]
 
@@ -146,10 +185,20 @@ class TechnicalAgent:
             entry_price = round(immediate_support, 2)
 
         atr_value = atr or 0.0
-        stop_loss = round(entry_price - (1.5 * atr_value), 2) if atr_value else round(entry_price * 0.95, 2)
+        stop_loss = (
+            round(entry_price - (1.5 * atr_value), 2)
+            if atr_value
+            else round(entry_price * 0.95, 2)
+        )
 
-        sorted_resistances = sorted({round(level, 2) for level in resistance_levels if level > entry_price})
-        target_1 = sorted_resistances[0] if sorted_resistances else round(entry_price + (2 * atr_value or entry_price * 0.05), 2)
+        sorted_resistances = sorted(
+            {round(level, 2) for level in resistance_levels if level > entry_price}
+        )
+        target_1 = (
+            sorted_resistances[0]
+            if sorted_resistances
+            else round(entry_price + (2 * atr_value or entry_price * 0.05), 2)
+        )
         target_2 = (
             sorted_resistances[1]
             if len(sorted_resistances) > 1
@@ -163,7 +212,8 @@ class TechnicalAgent:
             price_above_all_ma,
             ema_9 is not None and ema_21 is not None and ema_9 > ema_21,
             adx is not None and adx >= 20,
-            current_price > (vwap.dropna().iloc[-1] if not vwap.dropna().empty else current_price),
+            current_price
+            > (vwap.dropna().iloc[-1] if not vwap.dropna().empty else current_price),
             macd_bullish,
             golden_cross,
             not price_below_all_ma,
@@ -175,11 +225,13 @@ class TechnicalAgent:
             price_below_all_ma,
             ema_9 is not None and ema_21 is not None and ema_9 < ema_21,
             adx is not None and adx >= 20 and price_below_all_ma,
-            current_price < (vwap.dropna().iloc[-1] if not vwap.dropna().empty else current_price),
+            current_price
+            < (vwap.dropna().iloc[-1] if not vwap.dropna().empty else current_price),
             macd_bearish,
             death_cross,
             rsi_divergence,
-            bb_squeeze and current_price < (bb_lower if bb_lower is not None else current_price),
+            bb_squeeze
+            and current_price < (bb_lower if bb_lower is not None else current_price),
         ]
 
         bullish_count = sum(1 for item in bullish_checks if item)
@@ -228,7 +280,9 @@ class TechnicalAgent:
             "atr": atr,
             "patterns_detected": patterns_detected,
             "support_levels": [round(level, 2) for level in support_levels],
-            "resistance_levels": [round(level, 2) for level in sorted(set(resistance_levels))],
+            "resistance_levels": [
+                round(level, 2) for level in sorted(set(resistance_levels))
+            ],
             "entry_price": entry_price,
             "stop_loss": stop_loss,
             "target_1": round(target_1, 2),

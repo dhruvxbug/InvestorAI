@@ -6,15 +6,7 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-
-SECTOR_PE_AVERAGES = {
-    "IT": 25.0,
-    "BANKING": 15.0,
-    "FMCG": 45.0,
-    "AUTO": 20.0,
-    "PHARMA": 30.0,
-    "ENERGY": 12.0,
-}
+from config.settings import DCF_DISCOUNT_RATE, DCF_TERMINAL_GROWTH, SECTOR_PE_AVERAGES
 
 
 class FundamentalAgent:
@@ -50,7 +42,9 @@ class FundamentalAgent:
         if pe_ratio is None:
             return "FAIRLY VALUED"
         sector_key = (sector or "").upper()
-        sector_average = next((v for k, v in SECTOR_PE_AVERAGES.items() if k in sector_key), None)
+        sector_average = next(
+            (v for k, v in SECTOR_PE_AVERAGES.items() if k in sector_key), None
+        )
         if not sector_average:
             return "FAIRLY VALUED"
         if pe_ratio <= sector_average * 0.85:
@@ -60,7 +54,11 @@ class FundamentalAgent:
         return "FAIRLY VALUED"
 
     @staticmethod
-    def _score_metric(value: float | None, thresholds: tuple[float, float, float, float], reverse: bool = False) -> int:
+    def _score_metric(
+        value: float | None,
+        thresholds: tuple[float, float, float, float],
+        reverse: bool = False,
+    ) -> int:
         if value is None:
             return 5
         t1, t2, t3, t4 = thresholds
@@ -87,8 +85,8 @@ class FundamentalAgent:
     def analyze(self, ticker: str) -> dict[str, Any]:
         stock = yf.Ticker(ticker)
         info = stock.info or {}
-        financials = stock.financials
-        balance_sheet = stock.balance_sheet
+        # balance_sheet and financials are available for future expansion;
+        # current metrics are sourced from yfinance `info` + quarterly_financials + cashflow.
         cashflow = stock.cashflow
         quarterly_financials = stock.quarterly_financials
 
@@ -98,21 +96,35 @@ class FundamentalAgent:
         pb_ratio = info.get("priceToBook")
         ev_ebitda = info.get("enterpriseToEbitda")
 
-        revenue_series = self._match_row(quarterly_financials, ["Total Revenue", "Revenue", "Operating Revenue"])
+        revenue_series = self._match_row(
+            quarterly_financials, ["Total Revenue", "Revenue", "Operating Revenue"]
+        )
         eps_series = self._match_row(quarterly_financials, ["Diluted EPS", "Basic EPS"])
 
-        revenue_values = revenue_series.dropna().head(4).tolist() if revenue_series is not None else []
-        eps_values = eps_series.dropna().head(4).tolist() if eps_series is not None else []
+        revenue_values = (
+            revenue_series.dropna().head(4).tolist()
+            if revenue_series is not None
+            else []
+        )
+        eps_values = (
+            eps_series.dropna().head(4).tolist() if eps_series is not None else []
+        )
 
         revenue_growth = None
         if len(revenue_values) >= 4 and revenue_values[3] != 0:
-            revenue_growth = round(((revenue_values[0] - revenue_values[3]) / abs(revenue_values[3])) * 100, 2)
+            revenue_growth = round(
+                ((revenue_values[0] - revenue_values[3]) / abs(revenue_values[3]))
+                * 100,
+                2,
+            )
         elif info.get("revenueGrowth") is not None:
             revenue_growth = self._safe_pct(info.get("revenueGrowth"), 100)
 
         eps_growth = None
         if len(eps_values) >= 4 and eps_values[3] != 0:
-            eps_growth = round(((eps_values[0] - eps_values[3]) / abs(eps_values[3])) * 100, 2)
+            eps_growth = round(
+                ((eps_values[0] - eps_values[3]) / abs(eps_values[3])) * 100, 2
+            )
         elif info.get("earningsGrowth") is not None:
             eps_growth = self._safe_pct(info.get("earningsGrowth"), 100)
 
@@ -124,12 +136,16 @@ class FundamentalAgent:
         free_cashflow = info.get("freeCashflow")
         if free_cashflow is None:
             fcf_series = self._match_row(cashflow, ["Free Cash Flow"])
-            free_cashflow = self._last_non_null(fcf_series.dropna().tolist() if fcf_series is not None else [])
+            free_cashflow = self._last_non_null(
+                fcf_series.dropna().tolist() if fcf_series is not None else []
+            )
 
         dividend_yield = self._safe_pct(info.get("dividendYield"), 100)
         promoter_holding = self._safe_pct(info.get("heldPercentInsiders"), 100)
 
-        valuation_label = self._valuation_label(pe_ratio=pe_ratio, sector=info.get("sector"))
+        valuation_label = self._valuation_label(
+            pe_ratio=pe_ratio, sector=info.get("sector")
+        )
 
         metric_scores = {
             "revenue_growth": self._score_metric(revenue_growth, (-5, 0, 8, 15)),
@@ -137,7 +153,9 @@ class FundamentalAgent:
             "eps_growth": self._score_metric(eps_growth, (-5, 0, 8, 15)),
             "roe": self._score_metric(roe, (8, 12, 16, 20)),
             "roa": self._score_metric(roa, (3, 5, 8, 10)),
-            "debt_to_equity": self._score_metric(debt_to_equity, (0.5, 1.0, 1.5, 2.0), reverse=True),
+            "debt_to_equity": self._score_metric(
+                debt_to_equity, (0.5, 1.0, 1.5, 2.0), reverse=True
+            ),
             "current_ratio": self._score_metric(current_ratio, (0.8, 1.0, 1.3, 1.8)),
             "free_cashflow": self._score_metric(free_cashflow, (0, 1e8, 5e8, 1e9)),
         }
@@ -152,22 +170,42 @@ class FundamentalAgent:
         else:
             financial_health = "POOR"
 
-        sorted_metrics = sorted(metric_scores.items(), key=lambda item: item[1], reverse=True)
+        sorted_metrics = sorted(
+            metric_scores.items(), key=lambda item: item[1], reverse=True
+        )
         strengths = [name.replace("_", " ").title() for name, _ in sorted_metrics[:3]]
-        concerns = [name.replace("_", " ").title() for name, _ in sorted(metric_scores.items(), key=lambda i: i[1])[:2]]
+        concerns = [
+            name.replace("_", " ").title()
+            for name, _ in sorted(metric_scores.items(), key=lambda i: i[1])[:2]
+        ]
 
         fcf_history_series = self._match_row(cashflow, ["Free Cash Flow"])
         fcf_history = []
         if fcf_history_series is not None:
-            fcf_history = [float(x) for x in fcf_history_series.dropna().head(5).tolist() if float(x) > 0]
+            fcf_history = [
+                float(x)
+                for x in fcf_history_series.dropna().head(5).tolist()
+                if float(x) > 0
+            ]
 
-        discount_rate = 0.12
-        terminal_growth = 0.04
+        discount_rate = DCF_DISCOUNT_RATE
+        terminal_growth = DCF_TERMINAL_GROWTH
         growth_rate = 0.05
         if len(fcf_history) >= 2 and fcf_history[-1] > 0:
-            growth_rate = max(min((fcf_history[0] / fcf_history[-1]) ** (1 / (len(fcf_history) - 1)) - 1, 0.2), -0.1)
+            growth_rate = max(
+                min(
+                    (fcf_history[0] / fcf_history[-1]) ** (1 / (len(fcf_history) - 1))
+                    - 1,
+                    0.2,
+                ),
+                -0.1,
+            )
 
-        base_fcf = fcf_history[0] if fcf_history else (free_cashflow if free_cashflow and free_cashflow > 0 else 0)
+        base_fcf = (
+            fcf_history[0]
+            if fcf_history
+            else (free_cashflow if free_cashflow and free_cashflow > 0 else 0)
+        )
         projected_fcfs = []
         running_fcf = float(base_fcf)
         for year in range(1, 6):
@@ -176,19 +214,31 @@ class FundamentalAgent:
 
         terminal_value = 0.0
         if running_fcf > 0 and discount_rate > terminal_growth:
-            terminal_value = (running_fcf * (1 + terminal_growth)) / (discount_rate - terminal_growth)
+            terminal_value = (running_fcf * (1 + terminal_growth)) / (
+                discount_rate - terminal_growth
+            )
             terminal_value /= (1 + discount_rate) ** 5
 
         intrinsic_equity_value = sum(projected_fcfs) + terminal_value
         shares_outstanding = info.get("sharesOutstanding") or 0
-        intrinsic_value = round(intrinsic_equity_value / shares_outstanding, 2) if shares_outstanding else None
+        intrinsic_value = (
+            round(intrinsic_equity_value / shares_outstanding, 2)
+            if shares_outstanding
+            else None
+        )
 
         current_price = info.get("currentPrice") or info.get("regularMarketPrice")
         upside_pct = None
         if intrinsic_value is not None and current_price:
-            upside_pct = round(((intrinsic_value - float(current_price)) / float(current_price)) * 100, 2)
+            upside_pct = round(
+                ((intrinsic_value - float(current_price)) / float(current_price)) * 100,
+                2,
+            )
 
-        if valuation_label == "UNDERVALUED" and financial_health in {"EXCELLENT", "GOOD"}:
+        if valuation_label == "UNDERVALUED" and financial_health in {
+            "EXCELLENT",
+            "GOOD",
+        }:
             fundamental_signal = "BUY"
         elif valuation_label == "OVERVALUED" and financial_health in {"FAIR", "POOR"}:
             fundamental_signal = "SELL"

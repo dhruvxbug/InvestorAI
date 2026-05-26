@@ -36,3 +36,12 @@ htmlcov/
 stock_analyst/reports/*.json
 stock_analyst/reports/*.md
 !stock_analyst/reports/.gitkeep
+
+# md
+SYS_PROMPT.md
+ChangeV1.md
+AgentLogging.txt
+
+
+.DS_Store
+DS_Store
