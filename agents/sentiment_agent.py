@@ -65,6 +65,8 @@ class SentimentAgent:
         "bloomberg.com": 1.0,
         "default": 0.4,
     }
+    MAX_FACT_LENGTH = 180
+    FACT_TRUNCATE_LENGTH = MAX_FACT_LENGTH - 3
 
     def __init__(self) -> None:
         self.exa = ExaSearchClient()
@@ -152,14 +154,14 @@ class SentimentAgent:
         if not sentence:
             return "No material fact extracted."
         sentence = sentence.replace("\n", " ")
-        if len(sentence) > 180:
-            sentence = sentence[:177].rstrip() + "..."
+        if len(sentence) > SentimentAgent.MAX_FACT_LENGTH:
+            sentence = sentence[: SentimentAgent.FACT_TRUNCATE_LENGTH].rstrip() + "..."
         return sentence
 
     def analyze(
         self, ticker: str, company_name: str, sector_name: str = "Indian equity"
     ) -> dict[str, Any]:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         current_month = now.strftime("%B")
         current_year = now.year
 

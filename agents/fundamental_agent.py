@@ -16,6 +16,10 @@ class FundamentalAgent:
     INDIA_ERP = 0.065
     COST_OF_DEBT = 0.085
     TAX_RATE = 0.25
+    SCENARIO_ADJUSTMENT = 0.03
+    SCENARIO_DISCOUNT_ADJUSTMENT = 0.005
+    MIN_BEAR_GROWTH = -0.15
+    MAX_BULL_GROWTH = 0.30
 
     TERMINAL_GROWTH_MAP: dict[str, float] = {
         "TECH": 0.07,
@@ -134,7 +138,7 @@ class FundamentalAgent:
     def _growth_rate_from_history(fcf_history: list[float]) -> float:
         if len(fcf_history) < 2 or fcf_history[-1] <= 0:
             return 0.05
-        cagr = (fcf_history[0] / fcf_history[-1]) ** (1 / (len(fcf_history) - 1)) - 1
+        cagr = (fcf_history[-1] / fcf_history[0]) ** (1 / (len(fcf_history) - 1)) - 1
         return max(min(cagr, 0.25), -0.12)
 
     @staticmethod
@@ -145,6 +149,7 @@ class FundamentalAgent:
         wacc: float,
         terminal_growth: float,
     ) -> float | None:
+        # Gordon Growth terminal value is only valid when WACC > terminal growth.
         if base_fcf <= 0 or shares_outstanding <= 0 or wacc <= terminal_growth:
             return None
 
@@ -293,10 +298,9 @@ class FundamentalAgent:
         fcf_history_series = self._match_row(cashflow, ["Free Cash Flow"])
         fcf_history: list[float] = []
         if fcf_history_series is not None:
+            fcf_chronological = fcf_history_series.sort_index().dropna().tail(5)
             fcf_history = [
-                float(x)
-                for x in fcf_history_series.dropna().head(5).tolist()
-                if float(x) > 0
+                float(x) for x in fcf_chronological.tolist() if float(x) > 0
             ]
 
         shares_outstanding = self._safe_float(info.get("sharesOutstanding") or 0) or 0
@@ -305,11 +309,11 @@ class FundamentalAgent:
         wacc = self._dynamic_wacc(beta=beta, debt_to_equity=debt_to_equity)
         terminal_growth = self._terminal_growth_for_sector(sector)
         base_growth = self._growth_rate_from_history(fcf_history)
-        bear_growth = max(base_growth - 0.03, -0.15)
-        bull_growth = min(base_growth + 0.03, 0.3)
+        bear_growth = max(base_growth - self.SCENARIO_ADJUSTMENT, self.MIN_BEAR_GROWTH)
+        bull_growth = min(base_growth + self.SCENARIO_ADJUSTMENT, self.MAX_BULL_GROWTH)
 
         base_fcf = (
-            fcf_history[0]
+            fcf_history[-1]
             if fcf_history
             else (free_cashflow if free_cashflow and free_cashflow > 0 else 0.0)
         )
@@ -319,7 +323,9 @@ class FundamentalAgent:
             shares_outstanding=shares_outstanding,
             growth_rate=bear_growth,
             wacc=wacc,
-            terminal_growth=max(terminal_growth - 0.005, 0.02),
+            terminal_growth=max(
+                terminal_growth - self.SCENARIO_DISCOUNT_ADJUSTMENT, 0.02
+            ),
         )
         base_value = self._dcf_value_per_share(
             base_fcf=base_fcf,
@@ -332,8 +338,12 @@ class FundamentalAgent:
             base_fcf=base_fcf,
             shares_outstanding=shares_outstanding,
             growth_rate=bull_growth,
-            wacc=max(wacc - 0.005, terminal_growth + 0.01),
-            terminal_growth=min(terminal_growth + 0.005, 0.08),
+            wacc=max(
+                wacc - self.SCENARIO_DISCOUNT_ADJUSTMENT, terminal_growth + 0.01
+            ),
+            terminal_growth=min(
+                terminal_growth + self.SCENARIO_DISCOUNT_ADJUSTMENT, 0.08
+            ),
         )
 
         intrinsic_value = base_value
@@ -347,7 +357,11 @@ class FundamentalAgent:
         dcf_scenarios = {
             "bear": {
                 "growth": round(bear_growth * 100, 2),
-                "terminal_growth": round(max(terminal_growth - 0.005, 0.02) * 100, 2),
+                "terminal_growth": round(
+                    max(terminal_growth - self.SCENARIO_DISCOUNT_ADJUSTMENT, 0.02)
+                    * 100,
+                    2,
+                ),
                 "intrinsic_value": bear_value,
                 "upside_pct": self._pct_change(bear_value, current_price),
             },
@@ -359,7 +373,11 @@ class FundamentalAgent:
             },
             "bull": {
                 "growth": round(bull_growth * 100, 2),
-                "terminal_growth": round(min(terminal_growth + 0.005, 0.08) * 100, 2),
+                "terminal_growth": round(
+                    min(terminal_growth + self.SCENARIO_DISCOUNT_ADJUSTMENT, 0.08)
+                    * 100,
+                    2,
+                ),
                 "intrinsic_value": bull_value,
                 "upside_pct": self._pct_change(bull_value, current_price),
             },
