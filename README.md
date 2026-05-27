@@ -209,7 +209,7 @@ Evaluates financial health, valuation, and intrinsic value.
 
 **Sector Comparison:** Compares P/E to sector average across 15 Indian sectors (IT, Banking, FMCG, Auto, Pharma, Energy, etc.) to label the stock as UNDERVALUED / FAIRLY VALUED / OVERVALUED.
 
-**DCF Intrinsic Value:** Uses dynamic WACC (beta + leverage aware), sector-aware terminal growth, and bear/base/bull scenarios. Displays upside/downside % from current price for each case.
+**DCF Intrinsic Value:** Uses dynamic WACC (beta + leverage-aware), sector-aware terminal growth, and bear/base/bull scenarios. Displays upside/downside % from current price for each case.
 
 ---
 
