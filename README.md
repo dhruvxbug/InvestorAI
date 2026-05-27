@@ -45,7 +45,7 @@ yfinance
 • 52w High-Low"]
 
 TA[" Technical Analysis Agent
-pandas-ta<br/>
+ta (technical-analysis)<br/>
 • RSI
 • MACD
 • Bollinger Bands
@@ -139,6 +139,9 @@ class REPORT,DASH red
 -  **Composite Scoring** — 5-dimension score (Technical / Fundamental / Sentiment / Management / Valuation)
 -  **Streamlit Dashboard** — clean UI with signal banners, score bars, and one-click report export
 -  **Report Export** — save as Markdown, JSON, or PDF
+-  **Multi-Provider LLM Support** — use Anthropic, OpenRouter, or OpenAI
+-  **Model Picker in UI** — choose model/provider from the Streamlit sidebar
+-  **Analysis Modes** — Full Analysis, Quick Technical, or Sentiment Only
 
 ---
 
@@ -287,11 +290,11 @@ Runs a downside-first challenge pass across technical, fundamental, sentiment, a
 | Layer | Technology | Purpose |
 |---|---|---|
 | Language | Python 3.11+ | Core runtime |
-| Agent Framework | CrewAI | Multi-agent orchestration |
-| LLM | Use any API key (claude, OpenAI) | Reasoning and synthesis |
+| Agent Framework | Custom asyncio orchestrator | Parallel multi-agent execution |
+| LLM | Anthropic / OpenRouter / OpenAI | Reasoning and synthesis |
 | Web Intelligence | Exa.ai Python SDK | Live news, sentiment, management data |
 | Market Data | yfinance | NSE/BSE price and fundamental data |
-| Technical Analysis | pandas-ta | 40+ technical indicators |
+| Technical Analysis | ta | Local indicator computation |
 | Data Processing | pandas, numpy | DataFrames and numerical computation |
 | Frontend | Streamlit | Interactive web dashboard |
 | Data Validation | Pydantic v2 | Typed report schema |
@@ -380,7 +383,7 @@ Signal mapping:
 |---|---|---|
 | Stock price & OHLCV | Yahoo Finance (yfinance) | Real-time / 15-min delay |
 | Company fundamentals | Yahoo Finance | Quarterly updates |
-| Technical indicators | pandas-ta (computed locally) | Based on price data |
+| Technical indicators | ta (computed locally) | Based on price data |
 | News & recent events | Exa.ai web search | Live (crawled in real-time) |
 | Analyst ratings | Exa.ai (brokerage reports) | Live |
 | Management activity | Exa.ai (BSE filings, news) | Live |
@@ -394,10 +397,10 @@ Signal mapping:
 | Operation | API | Calls Per Analysis | Estimated Cost |
 |---|---|---|---|
 | Stock data + fundamentals | yfinance | 8–10 calls | Free |
-| Technical indicators | pandas-ta | 0 (local) | Free |
+| Technical indicators | ta | 0 (local) | Free |
 | News sentiment | Exa.ai | 5 searches (~50 results) | ~$0.05–0.10 |
 | Management intelligence | Exa.ai | 5 searches (~40 results) | ~$0.05–0.10 |
-| Report synthesis | Anthropic Claude | 3 chained calls (critique → conflict map → final report) | ~$0.05–0.12 |
+| Report synthesis | Selected LLM provider/model | 3 chained calls (critique → conflict map → final report) | Varies by model/provider |
 | **Total per analysis** | | | **~$0.12–0.25** |
 
 ---
@@ -410,3 +413,41 @@ Signal mapping:
 - DCF valuation is an approximation — treat as one signal, not ground truth
 - Technical signals work best on liquid large-cap stocks (Nifty 50 / Nifty 200)
 - Short-term signals are less reliable during high-volatility events (budget, elections, global crises)
+
+---
+
+## Quick Start
+
+```bash
+git clone https://github.com/dhruvxbug/InvestorAI.git
+cd InvestorAI
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+cp .env.example .env
+```
+
+Update `.env` with:
+- At least one LLM key: `ANTHROPIC_API_KEY` or `OPENROUTER_API_KEY` or `OPENAI_API_KEY`
+- Optional provider/model overrides: `LLM_PROVIDER`, `LLM_MODEL`
+- `EXA_API_KEY` for news/sentiment/management agents
+
+---
+
+## Run the Project
+
+### CLI
+```bash
+python main.py RELIANCE
+python main.py INFY --provider openrouter --model anthropic/claude-sonnet-4
+```
+
+### Streamlit UI
+```bash
+streamlit run app.py
+```
+
+In the sidebar, select:
+- Stock ticker
+- Analysis Type: Full Analysis / Quick Technical / Sentiment Only
+- Model/provider option (or custom provider + model ID)
