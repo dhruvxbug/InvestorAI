@@ -4,7 +4,7 @@
 
 # Multi-Agent Stock Analysis System
 
-This is a multi-agent system built specifically for retail investors using platforms like **Groww**, **Zerodha**, or **Angel One** in the Indian market. Instead of relying on manual research or screenshot-based advice, this system runs **6 specialized AI agents in parallel**, each analysing a different dimension of a stock, and synthesises everything into a single clean investment report.
+This is a multi-agent system built specifically for retail investors using platforms like **Groww**, **Zerodha**, or **Angel One** in the Indian market. Instead of relying on manual research or screenshot-based advice, this system runs specialized AI agents in parallel (plus a dedicated red-team pass), each analysing a different dimension of a stock, and synthesises everything into a single clean investment report.
 
 The system answers three core questions every investor needs:
 
@@ -45,7 +45,7 @@ yfinance
 • 52w High-Low"]
 
 TA[" Technical Analysis Agent
-pandas-ta<br/>
+ta (technical-analysis)<br/>
 • RSI
 • MACD
 • Bollinger Bands
@@ -129,7 +129,7 @@ class REPORT,DASH red
 
 ##  Key Features
 
--  **6 Specialized AI Agents** running concurrently via `asyncio`
+-  **Specialized AI Agents + Red Team Pass** orchestrated via `asyncio`
 -  **Full Technical Analysis** — RSI, MACD, Bollinger Bands, Moving Averages, ADX, ATR, Stochastic
 -  **Fundamental Analysis** — P/E, EPS growth, ROE, DCF intrinsic value, sector comparison
 -  **Live News & Sentiment** — powered by Exa.ai searching 30+ news sources in real time
@@ -139,6 +139,9 @@ class REPORT,DASH red
 -  **Composite Scoring** — 5-dimension score (Technical / Fundamental / Sentiment / Management / Valuation)
 -  **Streamlit Dashboard** — clean UI with signal banners, score bars, and one-click report export
 -  **Report Export** — save as Markdown, JSON, or PDF
+-  **Multi-Provider LLM Support** — use Anthropic, OpenRouter, or OpenAI
+-  **Model Picker in UI** — choose model/provider from the Streamlit sidebar
+-  **Analysis Modes** — Full Analysis, Quick Technical, or Sentiment Only
 
 ---
 
@@ -206,7 +209,7 @@ Evaluates financial health, valuation, and intrinsic value.
 
 **Sector Comparison:** Compares P/E to sector average across 15 Indian sectors (IT, Banking, FMCG, Auto, Pharma, Energy, etc.) to label the stock as UNDERVALUED / FAIRLY VALUED / OVERVALUED.
 
-**DCF Intrinsic Value:** Uses 5-year average FCF growth, discounted at 12%, with 4% terminal growth. Displays upside/downside % from current price.
+**DCF Intrinsic Value:** Uses dynamic WACC (beta + leverage-aware), sector-aware terminal growth, and bear/base/bull scenarios. Displays upside/downside % from current price for each case.
 
 ---
 
@@ -224,6 +227,8 @@ Scans the internet in real time using Exa.ai across 5 targeted search queries.
 **Sentiment Scoring:**
 - Each article classified: POSITIVE / NEGATIVE / NEUTRAL
 - Impact-weighted: HIGH (3x) · MEDIUM (2x) · LOW (1x)
+- Source-credibility weighted (Tier-1 > Tier-2 > unknown)
+- Recency-decayed (fresh news weighs more than stale articles)
 - Final output: VERY POSITIVE / POSITIVE / NEUTRAL / NEGATIVE / VERY NEGATIVE
 
 **Analyst Consensus:** Counts Buy / Hold / Sell ratings found in reports, extracts average / high / low target prices.
@@ -254,16 +259,29 @@ Analyses leadership quality, insider activity, and strategic direction via Exa.a
 
 ### 6. Synthesis Agent — `agents/synthesis_agent.py`
 
-The core reasoning agent. Uses another agent to combine all 5 agent outputs into a final, structured investment report.
+The core reasoning agent. It now runs a multi-pass chain:
+1) critique each agent output,
+2) resolve contradictions and risk hierarchy,
+3) generate the final structured investment report.
 
 **Generates:**
 - Long-Term Signal (1–3 years): BUY / ACCUMULATE / HOLD / REDUCE / SELL
 - Short-Term Signal (1–8 weeks): BUY / WAIT / AVOID / SELL
 - Exact ₹ entry price, stop loss, and targets for both horizons
 - Risk/Reward ratio
-- Composite score (5 dimensions, each out of 10)
+- Composite score (5 dimensions, each out of 10) using dynamic market-cap/liquidity-aware weights
 - 5-point key summary (TL;DR)
 - Confidence % based on agent agreement
+
+### 7. Red Team Agent — `agents/red_team_agent.py`
+
+Runs a downside-first challenge pass across technical, fundamental, sentiment, and management outputs.
+
+**Produces:**
+- contradiction map between agent conclusions
+- top failure scenarios
+- thesis-killer triggers that can invalidate the bull case
+- dominant risk ordering for synthesis
 
 ---
 
@@ -272,11 +290,11 @@ The core reasoning agent. Uses another agent to combine all 5 agent outputs into
 | Layer | Technology | Purpose |
 |---|---|---|
 | Language | Python 3.11+ | Core runtime |
-| Agent Framework | CrewAI | Multi-agent orchestration |
-| LLM | Use any API key (claude, OpenAI) | Reasoning and synthesis |
+| Agent Framework | Custom asyncio orchestrator | Parallel multi-agent execution |
+| LLM | Anthropic / OpenRouter / OpenAI | Reasoning and synthesis |
 | Web Intelligence | Exa.ai Python SDK | Live news, sentiment, management data |
 | Market Data | yfinance | NSE/BSE price and fundamental data |
-| Technical Analysis | pandas-ta | 40+ technical indicators |
+| Technical Analysis | ta | Local indicator computation |
 | Data Processing | pandas, numpy | DataFrames and numerical computation |
 | Frontend | Streamlit | Interactive web dashboard |
 | Data Validation | Pydantic v2 | Typed report schema |
@@ -332,12 +350,13 @@ EXA_SEARCH_DELAY_SECONDS = 0.5        # Rate limit delay between Exa searches
 
 ##  How Signals Are Generated
 
-The final signal is derived from a weighted combination of all 5 agents:
+The final signal is derived from a weighted combination of all 5 agents.
+Weights are dynamic by market cap and liquidity profile (large-cap vs mid-cap vs small/illiquid):
 
 ```
-Overall Score = (Technical × 0.25) + (Fundamental × 0.25)
-              + (Sentiment × 0.20) + (Management × 0.15)
-              + (Valuation × 0.15)
+Overall Score = (Technical × w1) + (Fundamental × w2)
+              + (Sentiment × w3) + (Management × w4)
+              + (Valuation × w5)
 
 Signal mapping:
   8.0 – 10.0  →  STRONG BUY
@@ -364,7 +383,7 @@ Signal mapping:
 |---|---|---|
 | Stock price & OHLCV | Yahoo Finance (yfinance) | Real-time / 15-min delay |
 | Company fundamentals | Yahoo Finance | Quarterly updates |
-| Technical indicators | pandas-ta (computed locally) | Based on price data |
+| Technical indicators | ta (computed locally) | Based on price data |
 | News & recent events | Exa.ai web search | Live (crawled in real-time) |
 | Analyst ratings | Exa.ai (brokerage reports) | Live |
 | Management activity | Exa.ai (BSE filings, news) | Live |
@@ -378,10 +397,10 @@ Signal mapping:
 | Operation | API | Calls Per Analysis | Estimated Cost |
 |---|---|---|---|
 | Stock data + fundamentals | yfinance | 8–10 calls | Free |
-| Technical indicators | pandas-ta | 0 (local) | Free |
+| Technical indicators | ta | 0 (local) | Free |
 | News sentiment | Exa.ai | 5 searches (~50 results) | ~$0.05–0.10 |
 | Management intelligence | Exa.ai | 5 searches (~40 results) | ~$0.05–0.10 |
-| Report synthesis | Anthropic Claude | 1 call (~4,000 tokens) | ~$0.02–0.05 |
+| Report synthesis | Selected LLM provider/model | 3 chained calls (critique → conflict map → final report) | Varies by model/provider |
 | **Total per analysis** | | | **~$0.12–0.25** |
 
 ---
@@ -394,3 +413,41 @@ Signal mapping:
 - DCF valuation is an approximation — treat as one signal, not ground truth
 - Technical signals work best on liquid large-cap stocks (Nifty 50 / Nifty 200)
 - Short-term signals are less reliable during high-volatility events (budget, elections, global crises)
+
+---
+
+## Quick Start
+
+```bash
+git clone https://github.com/dhruvxbug/InvestorAI.git
+cd InvestorAI
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+cp .env.example .env
+```
+
+Update `.env` with:
+- At least one LLM key: `ANTHROPIC_API_KEY` or `OPENROUTER_API_KEY` or `OPENAI_API_KEY`
+- Optional provider/model overrides: `LLM_PROVIDER`, `LLM_MODEL`
+- `EXA_API_KEY` for news/sentiment/management agents
+
+---
+
+## Run the Project
+
+### CLI
+```bash
+python main.py RELIANCE
+python main.py INFY --provider openrouter --model anthropic/claude-sonnet-4
+```
+
+### Streamlit UI
+```bash
+streamlit run app.py
+```
+
+In the sidebar, select:
+- Stock ticker
+- Analysis Type: Full Analysis / Quick Technical / Sentiment Only
+- Model/provider option (or custom provider + model ID)

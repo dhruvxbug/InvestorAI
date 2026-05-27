@@ -8,6 +8,7 @@ import yfinance as yf
 
 from agents.fundamental_agent import FundamentalAgent
 from agents.management_agent import ManagementAgent
+from agents.red_team_agent import RedTeamAgent
 from agents.sentiment_agent import SentimentAgent
 from agents.stock_data_agent import StockDataAgent
 from agents.synthesis_agent import SynthesisAgent
@@ -42,6 +43,7 @@ class AnalysisOrchestrator:
         self.management_agent = ManagementAgent()
         _llm = build_llm_client(provider=provider, model_id=model_id)
         self._active_model = _llm.display_name if _llm else "heuristic fallback"
+        self.red_team_agent = RedTeamAgent(llm_client=_llm)
         self.synthesis_agent = SynthesisAgent(llm_client=_llm)
 
     async def _fetch_info_with_retry(self, ticker: str) -> dict[str, Any]:
@@ -391,6 +393,14 @@ class AnalysisOrchestrator:
             "sentiment": sentiment,
             "management": management,
         }
+        red_team = await self._run_with_timeout(
+            "Red Team Agent",
+            self.red_team_agent.analyze,
+            ticker,
+            company_name,
+            merged_context,
+        )
+        merged_context["red_team"] = red_team
 
         synthesis = await self._run_synthesis_with_retry(
             ticker=ticker, company_name=company_name, context=merged_context
