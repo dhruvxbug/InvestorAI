@@ -4,7 +4,7 @@
 
 # Multi-Agent Stock Analysis System
 
-This is a multi-agent system built specifically for retail investors using platforms like **Groww**, **Zerodha**, or **Angel One** in the Indian market. Instead of relying on manual research or screenshot-based advice, this system runs **6 specialized AI agents in parallel**, each analysing a different dimension of a stock, and synthesises everything into a single clean investment report.
+This is a multi-agent system built specifically for retail investors using platforms like **Groww**, **Zerodha**, or **Angel One** in the Indian market. Instead of relying on manual research or screenshot-based advice, this system runs specialized AI agents in parallel (plus a dedicated red-team pass), each analysing a different dimension of a stock, and synthesises everything into a single clean investment report.
 
 The system answers three core questions every investor needs:
 
@@ -129,7 +129,7 @@ class REPORT,DASH red
 
 ##  Key Features
 
--  **6 Specialized AI Agents** running concurrently via `asyncio`
+-  **Specialized AI Agents + Red Team Pass** orchestrated via `asyncio`
 -  **Full Technical Analysis** — RSI, MACD, Bollinger Bands, Moving Averages, ADX, ATR, Stochastic
 -  **Fundamental Analysis** — P/E, EPS growth, ROE, DCF intrinsic value, sector comparison
 -  **Live News & Sentiment** — powered by Exa.ai searching 30+ news sources in real time
@@ -206,7 +206,7 @@ Evaluates financial health, valuation, and intrinsic value.
 
 **Sector Comparison:** Compares P/E to sector average across 15 Indian sectors (IT, Banking, FMCG, Auto, Pharma, Energy, etc.) to label the stock as UNDERVALUED / FAIRLY VALUED / OVERVALUED.
 
-**DCF Intrinsic Value:** Uses 5-year average FCF growth, discounted at 12%, with 4% terminal growth. Displays upside/downside % from current price.
+**DCF Intrinsic Value:** Uses dynamic WACC (beta + leverage aware), sector-aware terminal growth, and bear/base/bull scenarios. Displays upside/downside % from current price for each case.
 
 ---
 
@@ -224,6 +224,8 @@ Scans the internet in real time using Exa.ai across 5 targeted search queries.
 **Sentiment Scoring:**
 - Each article classified: POSITIVE / NEGATIVE / NEUTRAL
 - Impact-weighted: HIGH (3x) · MEDIUM (2x) · LOW (1x)
+- Source-credibility weighted (Tier-1 > Tier-2 > unknown)
+- Recency-decayed (fresh news weighs more than stale articles)
 - Final output: VERY POSITIVE / POSITIVE / NEUTRAL / NEGATIVE / VERY NEGATIVE
 
 **Analyst Consensus:** Counts Buy / Hold / Sell ratings found in reports, extracts average / high / low target prices.
@@ -254,16 +256,29 @@ Analyses leadership quality, insider activity, and strategic direction via Exa.a
 
 ### 6. Synthesis Agent — `agents/synthesis_agent.py`
 
-The core reasoning agent. Uses another agent to combine all 5 agent outputs into a final, structured investment report.
+The core reasoning agent. It now runs a multi-pass chain:
+1) critique each agent output,
+2) resolve contradictions and risk hierarchy,
+3) generate the final structured investment report.
 
 **Generates:**
 - Long-Term Signal (1–3 years): BUY / ACCUMULATE / HOLD / REDUCE / SELL
 - Short-Term Signal (1–8 weeks): BUY / WAIT / AVOID / SELL
 - Exact ₹ entry price, stop loss, and targets for both horizons
 - Risk/Reward ratio
-- Composite score (5 dimensions, each out of 10)
+- Composite score (5 dimensions, each out of 10) using dynamic market-cap/liquidity-aware weights
 - 5-point key summary (TL;DR)
 - Confidence % based on agent agreement
+
+### 7. Red Team Agent — `agents/red_team_agent.py`
+
+Runs a downside-first challenge pass across technical, fundamental, sentiment, and management outputs.
+
+**Produces:**
+- contradiction map between agent conclusions
+- top failure scenarios
+- thesis-killer triggers that can invalidate the bull case
+- dominant risk ordering for synthesis
 
 ---
 
@@ -332,12 +347,13 @@ EXA_SEARCH_DELAY_SECONDS = 0.5        # Rate limit delay between Exa searches
 
 ##  How Signals Are Generated
 
-The final signal is derived from a weighted combination of all 5 agents:
+The final signal is derived from a weighted combination of all 5 agents.
+Weights are dynamic by market cap and liquidity profile (large-cap vs mid-cap vs small/illiquid):
 
 ```
-Overall Score = (Technical × 0.25) + (Fundamental × 0.25)
-              + (Sentiment × 0.20) + (Management × 0.15)
-              + (Valuation × 0.15)
+Overall Score = (Technical × w1) + (Fundamental × w2)
+              + (Sentiment × w3) + (Management × w4)
+              + (Valuation × w5)
 
 Signal mapping:
   8.0 – 10.0  →  STRONG BUY
@@ -381,7 +397,7 @@ Signal mapping:
 | Technical indicators | pandas-ta | 0 (local) | Free |
 | News sentiment | Exa.ai | 5 searches (~50 results) | ~$0.05–0.10 |
 | Management intelligence | Exa.ai | 5 searches (~40 results) | ~$0.05–0.10 |
-| Report synthesis | Anthropic Claude | 1 call (~4,000 tokens) | ~$0.02–0.05 |
+| Report synthesis | Anthropic Claude | 3 chained calls (critique → conflict map → final report) | ~$0.05–0.12 |
 | **Total per analysis** | | | **~$0.12–0.25** |
 
 ---
