@@ -16,7 +16,7 @@ from typing import Any
 import plotly.graph_objects as go
 import streamlit as st
 
-from agents.orchestrator import AnalysisOrchestrator
+from agents.orchestrator import AnalysisOrchestrator, StockDataError
 from config.settings import validate_environment
 from models.report_schema import StockReport
 from utils.formatter import report_to_markdown
@@ -285,6 +285,10 @@ if analyse_clicked:
             _status.update(
                 label="✅ Analysis complete!", state="complete", expanded=False
             )
+        except StockDataError as _exc:
+            _status.update(label="❌ Invalid Ticker", state="error", expanded=True)
+            st.warning(str(_exc))
+            st.stop()
         except Exception as _exc:
             _status.update(label="❌ Analysis failed", state="error", expanded=True)
             st.error(f"**Error:** {_exc}")

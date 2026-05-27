@@ -62,7 +62,7 @@ class AnalysisOrchestrator:
         raise StockDataError(f"Failed to fetch data for {ticker}: {last_error}")
 
     async def _resolve_ticker(self, raw_ticker: str) -> tuple[str, dict[str, Any]]:
-        cleaned = raw_ticker.strip().upper()
+        cleaned = raw_ticker.strip().upper().replace(" ", "")
         if not cleaned:
             raise StockDataError("Ticker cannot be empty")
 

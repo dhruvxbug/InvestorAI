@@ -45,3 +45,7 @@ AgentLogging.txt
 
 .DS_Store
 DS_Store
+reports/
+/reports
+.reports
+.reports/

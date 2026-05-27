@@ -103,6 +103,22 @@ MODEL_CATALOG: list[dict] = [
         "provider": "openai",
         "model_id": "gpt-4o-mini",
     },
+    # Free tier via OpenRouter (rate-limited)
+    {
+        "label": "DeepSeek V4 Flash (Free)",
+        "provider": "openrouter",
+        "model_id": "deepseek/deepseek-v4-flash:free",
+    },
+    {
+        "label": "Gemini Flash 2.0  (Free)",
+        "provider": "openrouter",
+        "model_id": "google/gemini-2.0-flash-exp:free",
+    },
+    {
+        "label": "Llama 3.3 70B     (Free)",
+        "provider": "openrouter",
+        "model_id": "meta-llama/llama-3.3-70b-instruct:free",
+    },
 ]
 
 PROVIDER_DEFAULTS: dict[str, str] = {
@@ -231,8 +247,17 @@ def build_llm_client(
         )
         return None
 
-    # 3. Resolve model_id: explicit arg > LLM_MODEL env (catalog lookup or raw ID) > provider default
-    resolved_model: str = model_id or _resolve_model_id(LLM_MODEL, resolved_provider)
+    # 3. Resolve model_id
+    #    - explicit arg always wins
+    #    - if provider was explicitly overridden (passed as arg) but no model given,
+    #      use that provider's default (don't let an env model from a different provider bleed in)
+    #    - otherwise honour LLM_MODEL from env
+    if model_id:
+        resolved_model: str = model_id
+    elif provider:  # explicit provider override → use its default
+        resolved_model = PROVIDER_DEFAULTS.get(resolved_provider, "")
+    else:  # fully auto / env-driven → honour LLM_MODEL
+        resolved_model = _resolve_model_id(LLM_MODEL, resolved_provider)
 
     return LLMClient(
         provider=resolved_provider, api_key=api_key, model_id=resolved_model

@@ -39,7 +39,12 @@ FUNDAMENTAL ANALYSIS: {fundamental_data_json}
 NEWS & SENTIMENT: {sentiment_data_json}
 MANAGEMENT INTELLIGENCE: {management_data_json}
 
-Generate the full report following the exact structure specified.
+Generate the full report as a JSON object containing EXACTLY these keys:
+- "key_summary": array of 5 bullet points
+- "long_term": object with signal, entry_price, entry_condition, target_1_year, target_3_year, stop_loss_price, expected_cagr, risk_level, exit_triggers (array), key_risks (array), key_catalysts (array), confidence_pct (int), reasoning
+- "short_term": object with signal, entry_price, entry_condition, target_1, target_2, target_3, stop_loss, risk_reward_ratio, trade_setup_type, holding_period, confidence_pct (int), reasoning
+- "scores": object with technical, fundamental, sentiment, management, valuation, overall, agents_bullish (int), agents_bearish (int), agents_neutral (int)
+
 Include specific ₹ price levels for every entry, target, and stop loss.
 """.strip()
 
@@ -352,14 +357,17 @@ class SynthesisAgent:
         user_prompt = self._build_user_prompt(
             ticker=ticker, company_name=company_name, context=clean_context
         )
-        text_output = self.llm_client.complete(
-            system=SYSTEM_PROMPT,
-            user=user_prompt,
-            max_tokens=2500,
-            temperature=0.2,
-        )
-        parsed = self._extract_json(text_output)
-        if not parsed:
+        try:
+            text_output = self.llm_client.complete(
+                system=SYSTEM_PROMPT,
+                user=user_prompt,
+                max_tokens=2500,
+                temperature=0.2,
+            )
+            parsed = self._extract_json(text_output)
+            if not parsed:
+                return heuristic
+        except Exception:
             return heuristic
 
         parsed.setdefault("key_summary", heuristic["key_summary"])
