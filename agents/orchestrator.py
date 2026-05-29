@@ -22,7 +22,8 @@ from models.report_schema import (
     SignalType,
     StockReport,
 )
-from utils.formatter import report_to_markdown, save_report_files
+from utils.formatter import report_to_markdown
+from utils.storage import save_report_and_export
 from utils.llm_client import LLMClient, build_llm_client
 from utils.logger import get_logger
 
@@ -420,8 +421,8 @@ class AnalysisOrchestrator:
 
         REPORTS_DIR.mkdir(parents=True, exist_ok=True)
         markdown = report_to_markdown(report)
-        json_path, md_path = save_report_files(
-            report=report, markdown=markdown, output_dir=REPORTS_DIR
+        json_path, export_path = save_report_and_export(
+            report=report, markdown_text=markdown, output_dir=REPORTS_DIR
         )
-        self.logger.info("Saved report files: %s, %s", json_path, md_path)
-        return report, str(json_path), str(md_path)
+        self.logger.info("Saved report files: %s, %s", json_path, export_path)
+        return report, str(json_path), str(export_path)

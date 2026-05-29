@@ -41,6 +41,7 @@ stock_analyst/reports/*.md
 SYS_PROMPT.md
 ChangeV1.md
 AgentLogging.txt
+Improvements.md
 
 
 .DS_Store

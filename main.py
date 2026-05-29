@@ -46,7 +46,7 @@ async def _run(
         )
 
     orchestrator = AnalysisOrchestrator(provider=provider, model_id=model_id)
-    report, json_path, md_path = await orchestrator.analyze_stock(ticker)
+    report, json_path, export_path = await orchestrator.analyze_stock(ticker)
 
     print(f"\nTicker: {report.ticker}")
     print(f"Company: {report.company_name}")
@@ -57,7 +57,7 @@ async def _run(
     print(f"Short-Term Entry: ₹{report.short_term.entry_price:.2f}")
     print(f"Short-Term Stop Loss: ₹{report.short_term.stop_loss:.2f}")
     print(f"JSON Report: {json_path}")
-    print(f"Markdown Report: {md_path}")
+    print(f"Report File: {export_path}")
     print(f"Model used: {orchestrator._active_model}")
     return 0
 
